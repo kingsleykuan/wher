@@ -11,7 +11,7 @@ TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
     A2C_DEFAULT_CONFIG,
     {
         'use_gae': False,
-        'lr': 7e-4,
+        'lr': 2e-3,
         'grad_clip': 0.5,
         'epsilon': 1e-8,
     },

@@ -20,12 +20,13 @@ def main():
     # config['monitor'] = True
 
     # Override policy config for experiments
-    config['lr'] = 7e-4
+    config['lr'] = 2e-3
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     # Reduce input from 84x84 to 42x42 for faster training
-    config['model'] = {'dim': 42}
+    # at the cost of reduced policy performance
+    # config['model'] = {'dim': 42}
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
