@@ -16,13 +16,16 @@ def main():
     config['num_envs_per_worker'] = 16
     config['rollout_fragment_length'] = 20
 
-    config['env'] = 'BreakoutNoFrameskip-v4'
+    config['env'] = tune.grid_search(
+        ['BreakoutNoFrameskip-v4', 'QbertNoFrameskip-v4'])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
     # config['monitor'] = True
 
     # Override policy config for experiments
     config['lr'] = 2e-3
+    config['end_lr'] = 2e-4
+    config['anneal_timesteps'] = 10000000
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 

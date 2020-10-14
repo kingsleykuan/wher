@@ -6,12 +6,19 @@ from ray.rllib.agents.a3c.a3c_torch_policy import A3CTorchPolicy
 from ray.rllib.evaluation.postprocessing import Postprocessing
 from ray.rllib.policy.sample_batch import SampleBatch
 
+from optim.RMSpropLambdaLR import RMSpropLambdaLR
+
 # Merge modified config with A2C and A3C default config
 TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
     A2C_DEFAULT_CONFIG,
     {
         'use_gae': False,
+
+        # Linear learning rate annealing
         'lr': 2e-3,
+        'end_lr': 2e-4,
+        'anneal_timesteps': 10000000,
+
         'grad_clip': 0.5,
         'epsilon': 1e-8,
     },
@@ -36,6 +43,12 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     ])
     return overall_err
 
+def torch_optimizer(policy, config):
+    if config['lr'] == config['end_lr']:
+        return torch_rmsprop_optimizer(policy, config)
+    else:
+        return torch_rmsprop_lambdalr_optimizer(policy, config)
+
 # Use RMSprop as per source paper
 # More consistent than ADAM in non-stationary problems such as RL
 def torch_rmsprop_optimizer(policy, config):
@@ -43,6 +56,23 @@ def torch_rmsprop_optimizer(policy, config):
         policy.model.parameters(),
         lr=config['lr'],
         eps=config['epsilon'])
+
+# RMSprop with linear learning rate annealing
+def torch_rmsprop_lambdalr_optimizer(policy, config):
+    batch_size = (config['num_workers']
+        * config['num_envs_per_worker']
+        * config['rollout_fragment_length'])
+    
+    anneal_steps = float(config['anneal_timesteps']) / float(batch_size)
+
+    lr = float(config['lr'])
+    end_lr = float(config['end_lr'])
+
+    return RMSpropLambdaLR(
+        policy.model.parameters(),
+        lr=config['lr'],
+        eps=config['epsilon'],
+        lr_lambda=lambda x: 1. - ((1. - (end_lr / lr)) * (x / anneal_steps)))
 
 # Update stats function to include the current learning rate
 def stats(policy, train_batch):
@@ -61,7 +91,7 @@ TunedA2CPolicy = A3CTorchPolicy.with_updates(
         get_default_config=lambda: TUNED_A2C_CONFIG,
         loss_fn=actor_critic_loss,
         stats_fn=stats,
-        optimizer_fn=torch_rmsprop_optimizer)
+        optimizer_fn=torch_optimizer)
 
 TunedA2CTrainer = A2CTrainer.with_updates(
     name='TunedA2C',
