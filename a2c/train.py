@@ -1,6 +1,8 @@
 import ray
 from ray import tune
+from ray.rllib.models import ModelCatalog
 
+from a2c.small_model import SmallConvModel
 from a2c.tuned_a2c import TunedA2CTrainer
 
 def main():
@@ -24,9 +26,14 @@ def main():
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
+    config['model'] = {}
+
     # Reduce input from 84x84 to 42x42 for faster training
-    # at the cost of reduced policy performance
-    # config['model'] = {'dim': 42}
+    config['model']['dim'] = 42
+
+    # Use custom model with more layers tuned for smaller input
+    ModelCatalog.register_custom_model('small_conv_model', SmallConvModel)
+    config['model']['custom_model'] = 'small_conv_model'
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
