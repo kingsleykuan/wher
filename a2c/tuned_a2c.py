@@ -15,8 +15,8 @@ TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
         'use_gae': False,
 
         # Linear learning rate annealing
-        'lr': 2e-3,
-        'end_lr': 2e-4,
+        'lr': 1e-3,
+        'end_lr': 1e-4,
         'anneal_timesteps': 10000000,
 
         'grad_clip': 0.5,
