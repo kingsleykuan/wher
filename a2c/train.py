@@ -19,15 +19,18 @@ def main():
     config['env'] = tune.grid_search(
         [
             'BreakoutNoFrameskip-v4',
-            'QbertNoFrameskip-v4',
+            'MsPacmanNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
-    # config['monitor'] = True
+
+    # config['evaluation_interval'] = 5
+    # config['evaluation_num_episodes'] = 10
+    # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
     config['lr'] = 1e-3
-    config['end_lr'] = 1e-4
+    config['end_lr'] = 1e-3
     config['anneal_timesteps'] = 10000000
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
