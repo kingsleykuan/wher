@@ -21,6 +21,8 @@ TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
 
         'grad_clip': 0.5,
         'epsilon': 1e-8,
+
+        '_use_trajectory_view_api': False,
     },
     _allow_unknown_configs=True,
 )
@@ -59,10 +61,15 @@ def torch_rmsprop_optimizer(policy, config):
 
 # RMSprop with linear learning rate annealing
 def torch_rmsprop_lambdalr_optimizer(policy, config):
-    batch_size = (config['num_workers']
+    if config['num_workers'] == 0:
+        num_workers = 1
+    else:
+        num_workers = config['num_workers']
+
+    batch_size = (num_workers
         * config['num_envs_per_worker']
         * config['rollout_fragment_length'])
-    
+
     anneal_steps = float(config['anneal_timesteps']) / float(batch_size)
 
     lr = float(config['lr'])
