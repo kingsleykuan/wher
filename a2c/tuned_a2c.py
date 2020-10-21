@@ -1,10 +1,12 @@
+import torch
 from torch import nn
 from torch import optim
 from ray.rllib.agents.a3c import A2CTrainer
 from ray.rllib.agents.a3c.a2c import A2C_DEFAULT_CONFIG
 from ray.rllib.agents.a3c.a3c_torch_policy import A3CTorchPolicy
-from ray.rllib.evaluation.postprocessing import Postprocessing
+from ray.rllib.evaluation.postprocessing import compute_advantages, Postprocessing
 from ray.rllib.policy.sample_batch import SampleBatch
+from ray.rllib.utils.torch_ops import sequence_mask
 
 from optim.RMSpropLambdaLR import RMSpropLambdaLR
 
@@ -29,21 +31,69 @@ TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
 
 # Modify losses to average over batches instead of sum
 # Provides consistent behaviour when changing batch sizes
+# Fix loss to mask padded sequences when training with recurrent policies
 def actor_critic_loss(policy, model, dist_class, train_batch):
+    # If policy is recurrent, mask out padded sequences
+    # and calculate batch size
+    if policy.is_recurrent():
+        seq_lens = train_batch['seq_lens']
+        max_seq_len = torch.max(seq_lens)
+        mask_orig = sequence_mask(seq_lens, max_seq_len)
+        mask = torch.reshape(mask_orig, [-1])
+        batch_size = seq_lens.shape[0]
+    else:
+        mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
+        batch_size = mask.shape[0]
+
     logits, _ = model.from_batch(train_batch)
     values = model.value_function()
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = dist.entropy().mean()
-    policy.pi_err = -(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1)).mean()
-    policy.value_err = nn.functional.mse_loss(
-        values.reshape(-1), train_batch[Postprocessing.VALUE_TARGETS])
+    policy.entropy = -torch.sum(dist.entropy() * mask) / batch_size
+    policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
+    policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
     overall_err = sum([
         policy.pi_err,
-        policy.config["vf_loss_coeff"] * policy.value_err,
-        -policy.config["entropy_coeff"] * policy.entropy,
+        policy.config['vf_loss_coeff'] * policy.value_err,
+        policy.config['entropy_coeff'] * policy.entropy,
     ])
     return overall_err
+
+# Fix estimation of final reward using value function to use internal recurrent
+# state if any
+def add_advantages(policy,
+                   sample_batch,
+                   other_agent_batches=None,
+                   episode=None):
+
+    completed = sample_batch[SampleBatch.DONES][-1]
+    if completed:
+        last_r = 0.0
+    else:
+        # Trajectory has been truncated, estimate final reward using the
+        # value function from the terminal observation and
+        # internal recurrent state if any
+        next_state = []
+        for i in range(policy.num_state_tensors()):
+            next_state.append(sample_batch['state_out_{}'.format(i)][-1])
+        last_r = policy._value(sample_batch[SampleBatch.NEXT_OBS][-1],
+                               sample_batch[SampleBatch.ACTIONS][-1],
+                               sample_batch[SampleBatch.REWARDS][-1],
+                               *next_state)
+
+    return compute_advantages(
+        sample_batch, last_r, policy.config['gamma'], policy.config['lambda'],
+        policy.config['use_gae'], policy.config['use_critic'])
+
+# Fix value network mixin to use internal recurrent state if any
+class ValueNetworkMixin:
+    def _value(self, obs, prev_action, prev_reward, *state):
+        _ = self.model({
+            SampleBatch.CUR_OBS: torch.Tensor([obs]).to(self.device),
+            SampleBatch.PREV_ACTIONS: torch.Tensor([prev_action]).to(self.device),
+            SampleBatch.PREV_REWARDS: torch.Tensor([prev_reward]).to(self.device),
+        }, [torch.Tensor([s]).to(self.device) for s in state], torch.Tensor([1]).to(self.device))
+        return self.model.value_function()[0]
 
 def torch_optimizer(policy, config):
     if config['lr'] == config['end_lr']:
@@ -98,6 +148,8 @@ TunedA2CPolicy = A3CTorchPolicy.with_updates(
         get_default_config=lambda: TUNED_A2C_CONFIG,
         loss_fn=actor_critic_loss,
         stats_fn=stats,
+        postprocess_fn=add_advantages,
+        mixins=[ValueNetworkMixin],
         optimizer_fn=torch_optimizer)
 
 TunedA2CTrainer = A2CTrainer.with_updates(
