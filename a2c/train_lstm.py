@@ -2,7 +2,7 @@ import ray
 from ray import tune
 from ray.rllib.models import ModelCatalog
 
-from a2c.small_model import SmallConvModel
+from a2c.small_lstm_model import SmallConvLSTMModel
 from a2c.tuned_a2c import TunedA2CTrainer
 
 def main():
@@ -29,9 +29,12 @@ def main():
     # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 1e-3
-    config['lr_mode'] = 'constant'
-    config['grad_clip'] = 0.5
+    config['lr'] = 1e-4
+    config['lr_mode'] = 'cyclic'
+    config['cyclic_lr_base_lr'] = 1e-4
+    config['cyclic_lr_max_lr'] = 1e-3
+    config['cyclic_lr_step_size'] = 200
+    config['grad_clip'] = 10.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -40,8 +43,12 @@ def main():
     config['model']['dim'] = 42
 
     # Use custom model with more layers tuned for smaller input
-    ModelCatalog.register_custom_model('small_conv_model', SmallConvModel)
-    config['model']['custom_model'] = 'small_conv_model'
+    # Add lstm to model
+    ModelCatalog.register_custom_model('small_conv_lstm_model', SmallConvLSTMModel)
+    config['model']['custom_model'] = 'small_conv_lstm_model'
+    config['model']['framestack'] = True
+    config['model']['use_lstm'] = True
+    config['model']['max_seq_len'] = 20
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
