@@ -30,8 +30,7 @@ def main():
 
     # Override policy config for experiments
     config['lr'] = 1e-3
-    config['end_lr'] = 1e-3
-    config['anneal_timesteps'] = 10000000
+    config['lr_mode'] = 'constant'
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 

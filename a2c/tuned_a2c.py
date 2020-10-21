@@ -9,6 +9,7 @@ from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.torch_ops import sequence_mask
 
 from optim.RMSpropLambdaLR import RMSpropLambdaLR
+from optim.RMSpropCyclicLR import RMSpropCyclicLR
 
 # Merge modified config with A2C and A3C default config
 TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
@@ -16,10 +17,21 @@ TUNED_A2C_CONFIG = A2CTrainer.merge_trainer_configs(
     {
         'use_gae': False,
 
-        # Linear learning rate annealing
         'lr': 1e-3,
+
+        # Can be either constant, anneal, or cyclic
+        'lr_mode': 'constant',
+
+        # Linear learning rate annealing
         'end_lr': 1e-4,
         'anneal_timesteps': 10000000,
+
+        # Cyclic learning rate
+        'cyclic_lr_base_lr': 1e-4,
+        'cyclic_lr_max_lr': 1e-3,
+        'cyclic_lr_step_size': 200,
+        'cyclic_lr_mode': 'triangular',
+        'cyclic_lr_gamma': 0.99,
 
         'grad_clip': 0.5,
         'epsilon': 1e-8,
@@ -96,10 +108,12 @@ class ValueNetworkMixin:
         return self.model.value_function()[0]
 
 def torch_optimizer(policy, config):
-    if config['lr'] == config['end_lr']:
-        return torch_rmsprop_optimizer(policy, config)
-    else:
-        return torch_rmsprop_lambdalr_optimizer(policy, config)
+    optimizers = {}
+    optimizers['constant'] = torch_rmsprop_optimizer
+    optimizers['anneal'] = torch_rmsprop_lambdalr_optimizer
+    optimizers['cyclic'] = torch_rmsprop_cyclic_lr_optimizer
+    optimizer = optimizers[config['lr_mode']]
+    return optimizer(policy, config)
 
 # Use RMSprop as per source paper
 # More consistent than ADAM in non-stationary problems such as RL
@@ -130,6 +144,17 @@ def torch_rmsprop_lambdalr_optimizer(policy, config):
         lr=config['lr'],
         eps=config['epsilon'],
         lr_lambda=lambda x: 1. - ((1. - (end_lr / lr)) * (x / anneal_steps)))
+
+def torch_rmsprop_cyclic_lr_optimizer(policy, config):
+    return RMSpropCyclicLR(
+        policy.model.parameters(),
+        lr=config['cyclic_lr_base_lr'],
+        eps=config['epsilon'],
+        base_lr=config['cyclic_lr_base_lr'],
+        max_lr=config['cyclic_lr_max_lr'],
+        step_size_up=config['cyclic_lr_step_size'],
+        mode=config['cyclic_lr_mode'],
+        gamma=config['cyclic_lr_gamma'])
 
 # Update stats function to include the current learning rate
 def stats(policy, train_batch):
