@@ -9,15 +9,20 @@ class SmallConvNet(nn.Module):
     """
     Small PyTorch CNN.
     """
-    def __init__(self):
+    def __init__(self, num_input_channels, num_output_features):
         super(SmallConvNet, self).__init__()
-        self.conv1 = nn.Conv2d(4, 32, 3, 2, 1)
+
+        self.num_input_channels = num_input_channels
+        self.num_output_features = num_output_features
+
+        self.conv1 = nn.Conv2d(num_input_channels, 32, 3, 2, 1)
         self.conv2 = nn.Conv2d(32, 32, 3, 2, 1)
         self.conv3 = nn.Conv2d(32, 32, 3, 2, 1)
         self.conv4 = nn.Conv2d(32, 32, 3, 2, 1)
-        self.fc1 = nn.Linear(3 * 3 * 32, 256)
+        self.fc1 = nn.Linear(3 * 3 * 32, num_output_features)
 
     def forward(self, x):
+        # Input has shape [Batch, Channels, Height, Width]
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
@@ -30,18 +35,23 @@ class SmallConvNet(nn.Module):
 class ManagerModule(nn.Module):
     """
     """
-    def __init__(self):
+    def __init__(self, num_features_d):
         super(ManagerModule, self).__init__()
-        self.fc_m_space = nn.Linear(256, 256)
-        self.m_rnn = nn.LSTM(256, 256, batch_first=True)
 
-        self.vf = nn.Linear(256, 1)
+        self.num_features_d = num_features_d
+
+        self.fc_m_space = nn.Linear(num_features_d, num_features_d)
+        self.m_rnn = nn.LSTM(num_features_d, num_features_d, batch_first=True)
+
+        self.vf = nn.Linear(num_features_d, 1)
 
     def forward(self, z, state):
+        # Input has shape [Batch, Time, Features]
         s = F.relu(self.fc_m_space(z))
         g, [h, c] = self.m_rnn(s,
             [torch.unsqueeze(state[0], 0),
              torch.unsqueeze(state[1], 0)])
+        g = g / g.norm(dim=-1, keepdim=True)
         return s, g, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
     
     def value_function(self, z):
@@ -50,15 +60,18 @@ class ManagerModule(nn.Module):
 class WorkerModule(nn.Module):
     """
     """
-    def __init__(self, num_actions):
+    def __init__(self, num_features_d, num_features_k, num_actions):
         super(WorkerModule, self).__init__()
 
+        self.num_features_d = num_features_d
+        self.num_features_k = num_features_k
         self.num_actions = num_actions
 
-        self.phi = nn.Linear(256, 16, bias=False)
-        self.w_rnn = nn.LSTM(256, num_actions * 16, batch_first=True)
+        self.phi = nn.Linear(num_features_d, num_features_k, bias=False)
+        self.w_rnn = nn.LSTM(
+            num_features_d, num_features_k * num_actions, batch_first=True)
 
-        self.vf = nn.Linear(256, 1)
+        self.vf = nn.Linear(num_features_d, 1)
 
     def forward(self, z, g, state):
         w = torch.unsqueeze(self.phi(g), -1)
@@ -66,7 +79,8 @@ class WorkerModule(nn.Module):
         u, [h, c] = self.w_rnn(z,
             [torch.unsqueeze(state[0], 0),
              torch.unsqueeze(state[1], 0)])
-        u = torch.reshape(u, [u.shape[0], u.shape[1], self.num_actions, 16])
+        u = torch.reshape(
+            u, [u.shape[0], u.shape[1], self.num_actions, self.num_features_k])
 
         action = torch.squeeze(torch.matmul(u, w), -1)
         
@@ -76,6 +90,7 @@ class WorkerModule(nn.Module):
         return self.vf(z)
 
 # TODO: Dilated LSTM states
+# TODO: Pool g over horizon
 class FuNModel(RecurrentNetwork, nn.Module):
     """
     """
@@ -83,18 +98,23 @@ class FuNModel(RecurrentNetwork, nn.Module):
         RecurrentNetwork.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
+        self.num_input_channels = 4
+        self.num_features_d = 256
+        self.num_features_k = 16
         self.num_outputs = num_outputs
 
-        self.convnet = SmallConvNet()
+        self.convnet = SmallConvNet(
+            self.num_input_channels, self.num_features_d)
         self.conv_features = None
 
         self.z = None
         
-        self.manager = ManagerModule()
+        self.manager = ManagerModule(self.num_features_d)
         self.s = None
         self.g = None
 
-        self.worker = WorkerModule(num_outputs)
+        self.worker = WorkerModule(
+            self.num_features_d, self.num_features_k, self.num_outputs)
 
     @override(RecurrentNetwork)
     def forward(self, input_dict, state, seq_lens):
@@ -125,10 +145,14 @@ class FuNModel(RecurrentNetwork, nn.Module):
     @override(ModelV2)
     def get_initial_state(self):
         h = [
-            self.convnet.fc1.weight.new(1, 256).zero_().squeeze(0),
-            self.convnet.fc1.weight.new(1, 256).zero_().squeeze(0),
-            self.convnet.fc1.weight.new(1, self.num_outputs * 16).zero_().squeeze(0),
-            self.convnet.fc1.weight.new(1, self.num_outputs * 16).zero_().squeeze(0),
+            self.convnet.fc1.weight.new(
+                1, self.num_features_d).zero_().squeeze(0),
+            self.convnet.fc1.weight.new(
+                1, self.num_features_d).zero_().squeeze(0),
+            self.convnet.fc1.weight.new(
+                1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
+            self.convnet.fc1.weight.new(
+                1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
         ]
         return h
     
