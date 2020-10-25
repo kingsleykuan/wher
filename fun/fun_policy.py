@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -72,13 +73,27 @@ def postprocesses_trajectories(
 
     Computes advantages.
     """
+    horizon = 5
     manager_latent_state = torch.Tensor(sample_batch['manager_latent_state'])
     manager_goal = torch.Tensor(sample_batch['manager_goal'])
 
-    fun_intrinsic_reward = F.cosine_similarity(manager_latent_state, manager_goal, dim=1)
-    fun_intrinsic_reward = fun_intrinsic_reward.numpy()
-    sample_batch[SampleBatch.REWARDS] = (sample_batch[SampleBatch.REWARDS]
-        + fun_intrinsic_reward)
+    fun_intrinsic_reward = []
+    for i in range(manager_latent_state.shape[0]):
+        reward = 0
+        for j in range(1, horizon + 1):
+            index = i - j
+            if index < 0:
+                index = 0
+
+            manager_latent_state_current = manager_latent_state[i]
+            manager_latent_state_prev = manager_latent_state[index]
+            manager_latent_state_diff = manager_latent_state_current - manager_latent_state_prev
+            manager_goal_prev = manager_goal[index]
+            reward = reward + F.cosine_similarity(manager_latent_state_diff, manager_goal_prev, dim=0)
+        reward = reward / horizon
+        fun_intrinsic_reward.append(reward)
+
+    fun_intrinsic_reward = np.array(fun_intrinsic_reward)
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
@@ -108,6 +123,9 @@ def postprocesses_trajectories(
     sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
+    sample_batch[SampleBatch.REWARDS] = (sample_batch[SampleBatch.REWARDS]
+        + fun_intrinsic_reward)
+
     # Compute advantages and value targets for the worker
     sample_batch[SampleBatch.VF_PREDS] = sample_batch['worker_values']
     sample_batch = compute_advantages(
@@ -128,29 +146,37 @@ def postprocesses_trajectories(
 # Provides consistent behaviour when changing batch sizes
 # Fix loss to mask padded sequences when training with recurrent policies
 def actor_critic_loss(policy, model, dist_class, train_batch):
-    # If policy is recurrent, mask out padded sequences
-    # and calculate batch size
-    if policy.is_recurrent():
-        seq_lens = train_batch['seq_lens']
-        max_seq_len = torch.max(seq_lens)
-        mask_orig = sequence_mask(seq_lens, max_seq_len)
-        mask = torch.reshape(mask_orig, [-1])
-        batch_size = seq_lens.shape[0]
-    else:
-        mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
-        batch_size = mask.shape[0]
+    assert policy.is_recurrent(), "policy must be recurrent"
+
+    seq_lens = train_batch['seq_lens']
+    max_seq_len = torch.max(seq_lens)
+    mask_orig = sequence_mask(seq_lens, max_seq_len)
+    mask = torch.reshape(mask_orig, [-1])
+    batch_size = seq_lens.shape[0]
 
     logits, _ = model.from_batch(train_batch)
     manager_values, worker_values = model.value_function()
 
-    s, g = model.manager_features()
-    s = s.reshape(-1).detach()
-    g = g.reshape(-1)
+    manager_latent_state, manager_goal = model.manager_features()
 
-    #s1 = s[:, 1:, :].reshape(-1)
-    #s2 = s[:, :-1, :].reshape(-1)
-    #g = g[:, :-1, :].reshape(-1)
-    policy.manager_loss = torch.sum(train_batch['manager_advantages'] * F.cosine_similarity(s, g, dim=0) * mask) / batch_size
+    horizon = 5
+    manager_latent_state_future = manager_latent_state[:, horizon:, :]
+    manager_latent_state_future = F.pad(
+        manager_latent_state_future,
+        (0, 0, 0, horizon),
+        'constant',
+        0)
+    manager_latent_state_diff = (manager_latent_state_future - manager_latent_state).reshape(-1).detach()
+    manager_goal = manager_goal.reshape(-1)
+
+    horizon_mask = mask_orig
+    horizon_mask[:, -horizon:] = 0
+    horizon_mask = horizon_mask.reshape(-1)
+
+    policy.manager_loss = -torch.sum(
+        train_batch['manager_advantages']
+        * F.cosine_similarity(manager_latent_state_diff, manager_goal, dim=0)
+        * horizon_mask) / batch_size
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
