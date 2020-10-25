@@ -46,6 +46,9 @@ def model_extra_out(policy, input_dict, state_batches, model, action_dist):
     """
     Collects additional output for batches of experiences / observations.
     """
+    # Get the manager and worker value estimations
+    manager_values, worker_values = model.value_function()
+
     # Manager latent state and goal have shape [Batch, Time, Features]
     # Time dimension is squeezed as it is always 1
     manager_latent_state, manager_goal = model.manager_features()
@@ -53,7 +56,8 @@ def model_extra_out(policy, input_dict, state_batches, model, action_dist):
     manager_goal = torch.squeeze(manager_goal, 1)
 
     return {
-        SampleBatch.VF_PREDS: model.value_function(),
+        'manager_values': manager_values,
+        'worker_values': worker_values,
         'manager_latent_state': manager_latent_state,
         'manager_goal': manager_goal,
     }
@@ -78,7 +82,8 @@ def postprocesses_trajectories(
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
-        last_r = 0.0
+        manager_last_r = 0.0
+        worker_last_r = 0.0
     else:
         # Trajectory has been truncated, estimate final reward using the
         # value function from the terminal observation and
@@ -86,14 +91,38 @@ def postprocesses_trajectories(
         next_state = []
         for i in range(policy.num_state_tensors()):
             next_state.append(sample_batch['state_out_{}'.format(i)][-1])
-        last_r = policy._value(sample_batch[SampleBatch.NEXT_OBS][-1],
-                               sample_batch[SampleBatch.ACTIONS][-1],
-                               sample_batch[SampleBatch.REWARDS][-1],
-                               *next_state)
+        manager_last_r, worker_last_r = policy._value(
+            sample_batch[SampleBatch.NEXT_OBS][-1],
+            sample_batch[SampleBatch.ACTIONS][-1],
+            sample_batch[SampleBatch.REWARDS][-1],
+            *next_state)
+        manager_last_r = manager_last_r[0]
+        worker_last_r = worker_last_r[0]
 
-    return compute_advantages(
-        sample_batch, last_r, policy.config['gamma'], policy.config['lambda'],
-        policy.config['use_gae'], policy.config['use_critic'])
+    # Compute advantages and value targets for the manager
+    sample_batch[SampleBatch.VF_PREDS] = sample_batch['manager_values']
+    sample_batch = compute_advantages(
+        sample_batch, manager_last_r, policy.config['gamma'],
+        policy.config['lambda'], policy.config['use_gae'],
+        policy.config['use_critic'])
+    sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
+    sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
+
+    # Compute advantages and value targets for the worker
+    sample_batch[SampleBatch.VF_PREDS] = sample_batch['worker_values']
+    sample_batch = compute_advantages(
+        sample_batch, worker_last_r, policy.config['gamma'],
+        policy.config['lambda'], policy.config['use_gae'],
+        policy.config['use_critic'])
+    sample_batch['worker_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
+    sample_batch['worker_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
+
+    # WARNING: These values are only used temporarily. Do not use:
+    # sample_batch[SampleBatch.VF_PREDS]
+    # sample_batch[Postprocessing.ADVANTAGES]
+    # sample_batch[Postprocessing.VALUE_TARGETS]
+
+    return sample_batch
 
 # Modify losses to average over batches instead of sum
 # Provides consistent behaviour when changing batch sizes
@@ -112,25 +141,29 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         batch_size = mask.shape[0]
 
     logits, _ = model.from_batch(train_batch)
-    values = model.value_function()
+    manager_values, worker_values = model.value_function()
 
     s, g = model.manager_features()
-    s = s.reshape(-1)
+    s = s.reshape(-1).detach()
     g = g.reshape(-1)
 
     #s1 = s[:, 1:, :].reshape(-1)
     #s2 = s[:, :-1, :].reshape(-1)
     #g = g[:, :-1, :].reshape(-1)
-    policy.manager_loss = torch.sum(train_batch[Postprocessing.ADVANTAGES] * F.cosine_similarity(s, g, dim=0) * mask) / batch_size
+    policy.manager_loss = torch.sum(train_batch['manager_advantages'] * F.cosine_similarity(s, g, dim=0) * mask) / batch_size
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
     policy.entropy = -torch.sum(dist.entropy() * mask) / batch_size
-    policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
-    policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
+    policy.pi_err = -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask) / batch_size
+
+    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0)) / batch_size
+    policy.worker_value_err = torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0)) / batch_size
+
     overall_err = sum([
         policy.pi_err,
-        policy.config['vf_loss_coeff'] * policy.value_err,
+        policy.config['vf_loss_coeff'] * policy.manager_value_err,
+        policy.config['vf_loss_coeff'] * policy.worker_value_err,
         policy.config['entropy_coeff'] * policy.entropy,
         policy.manager_loss,
     ])
@@ -144,7 +177,7 @@ class ValueNetworkMixin:
             SampleBatch.PREV_ACTIONS: torch.Tensor([prev_action]).to(self.device),
             SampleBatch.PREV_REWARDS: torch.Tensor([prev_reward]).to(self.device),
         }, [torch.Tensor([s]).to(self.device) for s in state], torch.Tensor([1]).to(self.device))
-        return self.model.value_function()[0]
+        return self.model.value_function()
 
 def torch_optimizer(policy, config):
     optimizers = {}
@@ -200,7 +233,9 @@ def stats(policy, train_batch):
     return {
         'policy_entropy': policy.entropy.item(),
         'policy_loss': policy.pi_err.item(),
-        'vf_loss': policy.value_err.item(),
+        'manager_loss': policy.manager_loss.item(),
+        'manager_vf_loss': policy.manager_value_err.item(),
+        'worker_vf_loss': policy.worker_value_err.item(),
         'cur_lr': policy._optimizers[0].param_groups[0]['lr'],
     }
 

@@ -145,8 +145,9 @@ class FuNModel(RecurrentNetwork, nn.Module):
     @override(ModelV2)
     def value_function(self):
         assert self.z is not None, "must call forward() first"
-        value_out = torch.reshape(self.worker.value_function(self.z), [-1])
-        return value_out
+        manager_values = torch.reshape(self.manager.value_function(self.z), [-1])
+        worker_values = torch.reshape(self.worker.value_function(self.z), [-1])
+        return manager_values, worker_values
 
     @override(ModelV2)
     def get_initial_state(self):
