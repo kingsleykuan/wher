@@ -42,42 +42,39 @@ FUN_CONFIG = A2CTrainer.merge_trainer_configs(
     _allow_unknown_configs=True,
 )
 
-# Modify losses to average over batches instead of sum
-# Provides consistent behaviour when changing batch sizes
-# Fix loss to mask padded sequences when training with recurrent policies
-def actor_critic_loss(policy, model, dist_class, train_batch):
-    # If policy is recurrent, mask out padded sequences
-    # and calculate batch size
-    if policy.is_recurrent():
-        seq_lens = train_batch['seq_lens']
-        max_seq_len = torch.max(seq_lens)
-        mask_orig = sequence_mask(seq_lens, max_seq_len)
-        mask = torch.reshape(mask_orig, [-1])
-        batch_size = seq_lens.shape[0]
-    else:
-        mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
-        batch_size = mask.shape[0]
+def model_extra_out(policy, input_dict, state_batches, model, action_dist):
+    """
+    Collects additional output for batches of experiences / observations.
+    """
+    # Manager latent state and goal have shape [Batch, Time, Features]
+    # Time dimension is squeezed as it is always 1
+    manager_latent_state, manager_goal = model.manager_features()
+    manager_latent_state = torch.squeeze(manager_latent_state, 1)
+    manager_goal = torch.squeeze(manager_goal, 1)
 
-    logits, _ = model.from_batch(train_batch)
-    values = model.value_function()
-    dist = dist_class(logits, model)
-    log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = -torch.sum(dist.entropy() * mask) / batch_size
-    policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
-    policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
-    overall_err = sum([
-        policy.pi_err,
-        policy.config['vf_loss_coeff'] * policy.value_err,
-        policy.config['entropy_coeff'] * policy.entropy,
-    ])
-    return overall_err
+    return {
+        SampleBatch.VF_PREDS: model.value_function(),
+        'manager_latent_state': manager_latent_state,
+        'manager_goal': manager_goal,
+    }
 
-# Fix estimation of final reward using value function to use internal recurrent
-# state if any
-def add_advantages(policy,
-                   sample_batch,
-                   other_agent_batches=None,
-                   episode=None):
+def postprocesses_trajectories(
+        policy, sample_batch, other_agent_batches=None, episode=None):
+    """
+    Postprocesses individual trajectories.
+
+    Inputs are numpy arrays with shape [Time, Feature Dims...] or [Time]
+    if there is only one feature. Note that inputs are not batched.
+
+    Computes advantages.
+    """
+    manager_latent_state = torch.Tensor(sample_batch['manager_latent_state'])
+    manager_goal = torch.Tensor(sample_batch['manager_goal'])
+
+    fun_intrinsic_reward = F.cosine_similarity(manager_latent_state, manager_goal, dim=1)
+    fun_intrinsic_reward = fun_intrinsic_reward.numpy()
+    sample_batch[SampleBatch.REWARDS] = (sample_batch[SampleBatch.REWARDS]
+        + fun_intrinsic_reward)
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
@@ -97,6 +94,47 @@ def add_advantages(policy,
     return compute_advantages(
         sample_batch, last_r, policy.config['gamma'], policy.config['lambda'],
         policy.config['use_gae'], policy.config['use_critic'])
+
+# Modify losses to average over batches instead of sum
+# Provides consistent behaviour when changing batch sizes
+# Fix loss to mask padded sequences when training with recurrent policies
+def actor_critic_loss(policy, model, dist_class, train_batch):
+    # If policy is recurrent, mask out padded sequences
+    # and calculate batch size
+    if policy.is_recurrent():
+        seq_lens = train_batch['seq_lens']
+        max_seq_len = torch.max(seq_lens)
+        mask_orig = sequence_mask(seq_lens, max_seq_len)
+        mask = torch.reshape(mask_orig, [-1])
+        batch_size = seq_lens.shape[0]
+    else:
+        mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
+        batch_size = mask.shape[0]
+
+    logits, _ = model.from_batch(train_batch)
+    values = model.value_function()
+
+    s, g = model.manager_features()
+    s = s.reshape(-1)
+    g = g.reshape(-1)
+
+    #s1 = s[:, 1:, :].reshape(-1)
+    #s2 = s[:, :-1, :].reshape(-1)
+    #g = g[:, :-1, :].reshape(-1)
+    policy.manager_loss = torch.sum(train_batch[Postprocessing.ADVANTAGES] * F.cosine_similarity(s, g, dim=0) * mask) / batch_size
+
+    dist = dist_class(logits, model)
+    log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
+    policy.entropy = -torch.sum(dist.entropy() * mask) / batch_size
+    policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
+    policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
+    overall_err = sum([
+        policy.pi_err,
+        policy.config['vf_loss_coeff'] * policy.value_err,
+        policy.config['entropy_coeff'] * policy.entropy,
+        policy.manager_loss,
+    ])
+    return overall_err
 
 # Fix value network mixin to use internal recurrent state if any
 class ValueNetworkMixin:
@@ -172,9 +210,10 @@ def get_policy_class(config):
 FuNPolicy = A3CTorchPolicy.with_updates(
         name='FuNPolicy',
         get_default_config=lambda: FUN_CONFIG,
+        extra_action_out_fn=model_extra_out,
+        postprocess_fn=postprocesses_trajectories,
         loss_fn=actor_critic_loss,
         stats_fn=stats,
-        postprocess_fn=add_advantages,
         mixins=[ValueNetworkMixin],
         optimizer_fn=torch_optimizer)
 
