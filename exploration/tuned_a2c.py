@@ -57,6 +57,15 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
         batch_size = mask.shape[0]
 
+    icm_loss, _ = model.icm_forward(
+        train_batch[SampleBatch.OBS],
+        train_batch[SampleBatch.NEXT_OBS],
+        train_batch[SampleBatch.ACTIONS]
+    )
+    icm_loss = torch.sum(icm_loss)
+    icm_loss /= batch_size
+    policy.icm_loss = icm_loss
+
     logits, _ = model.from_batch(train_batch)
     values = model.value_function()
     dist = dist_class(logits, model)
@@ -65,9 +74,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
     policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
     overall_err = sum([
-        policy.pi_err,
+        policy.pi_err, #TODO tune lambda here
         policy.config['vf_loss_coeff'] * policy.value_err,
         policy.config['entropy_coeff'] * policy.entropy,
+        icm_loss #TODO multiply by 10?
     ])
     return overall_err
 
@@ -77,6 +87,14 @@ def add_advantages(policy,
                    sample_batch,
                    other_agent_batches=None,
                    episode=None):
+    _, exploration_rewards = policy.model.icm_forward(
+        torch.Tensor(sample_batch[SampleBatch.OBS]),
+        torch.Tensor(sample_batch[SampleBatch.NEXT_OBS]),
+        torch.Tensor(sample_batch[SampleBatch.ACTIONS])
+    )
+    exploration_rewards = exploration_rewards.numpy()
+    sample_batch[SampleBatch.REWARDS] += exploration_rewards
+    policy.exploration_rewards = exploration_rewards
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
@@ -92,7 +110,6 @@ def add_advantages(policy,
                                sample_batch[SampleBatch.ACTIONS][-1],
                                sample_batch[SampleBatch.REWARDS][-1],
                                *next_state)
-
     return compute_advantages(
         sample_batch, last_r, policy.config['gamma'], policy.config['lambda'],
         policy.config['use_gae'], policy.config['use_critic'])
@@ -163,6 +180,8 @@ def stats(policy, train_batch):
         'policy_loss': policy.pi_err.item(),
         'vf_loss': policy.value_err.item(),
         'cur_lr': policy._optimizers[0].param_groups[0]['lr'],
+        'icm_loss': policy.icm_loss.item(),
+        'exploration_rewards': policy.exploration_rewards.item()
     }
 
 def get_policy_class(config):

@@ -29,7 +29,7 @@ class ConvBlock(nn.Module):
         x = F.leaky_relu(self.conv2(x))
         x = F.leaky_relu(self.conv3(x))
         x = F.leaky_relu(self.conv4(x))
-        return x.view(x.shape[0], -1)  # retain batch size
+        return x.reshape(x.shape[0], -1)  # retain batch size
 
 
 class FeatureEncoderNet(nn.Module):
@@ -136,8 +136,8 @@ class ICMNet(nn.Module):
         self.num_actions = num_actions
 
         self.feat_enc_net = FeatureEncoderNet(n_stack, self.in_size)
-        self.fwd_net = ForwardNet(self.feat_size + self.num_actions)
-        self.inv_net = InverseNet(self.num_actions, self.feat_size)
+        self.fwd_net = ForwardNet(self.in_size + self.num_actions)
+        self.inv_net = InverseNet(self.num_actions, self.in_size)
 
     def forward(self, current_states, next_states, action):
         """
@@ -172,4 +172,4 @@ class ICMNet(nn.Module):
         # inverse loss
         loss_inv = F.cross_entropy(action_preds.view(-1, self.num_actions), actions.long())
 
-        return loss_fwd + loss_inv
+        return loss_fwd + loss_inv # TODO tune beta here

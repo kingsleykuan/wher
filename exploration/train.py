@@ -2,9 +2,8 @@ import ray
 from ray import tune
 from ray.rllib.models import ModelCatalog
 
-from exploration.inverse import InverseNet
-from a2c.small_model import SmallConvModel
-from a2c.tuned_a2c import TunedA2CTrainer
+from exploration.small_model import SmallConvModel
+from exploration.tuned_a2c import TunedA2CTrainer
 
 def main():
     config = {}
@@ -20,7 +19,6 @@ def main():
     config['env'] = tune.grid_search(
         [
             'BreakoutNoFrameskip-v4',
-            'QbertNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000

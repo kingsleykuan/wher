@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.utils.annotations import override
-from exploration.inverse import ICMNet
+from exploration.icm import ICMNet
 
 class SmallConvNet(nn.Module):
     """
@@ -57,7 +57,8 @@ class SmallConvModel(TorchModelV2, nn.Module):
         value_out = self.value_branch(self.conv_features).squeeze(1)
         return value_out
 
-    @override(TorchModelV2)
-    def custom_loss(self, policy_loss, loss_inputs):
-        loss, intrinsic_reward = self.icm_net(loss_inputs['obs'], loss_inputs['new_obs'], loss_inputs['actions'])
-        return policy_loss
+    def icm_forward(self, obs, next_obs, actions):
+        """
+        returns loss, intrinsic_reward
+        """
+        return self.icm_net(obs.permute(0, 3, 1, 2).float(), next_obs.permute(0, 3, 1, 2).float(), actions)
