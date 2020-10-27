@@ -80,20 +80,22 @@ def postprocesses_trajectories(
     fun_intrinsic_reward = []
     for i in range(manager_latent_state.shape[0]):
         reward = 0
+        reward_horizon = 0
         for j in range(1, horizon + 1):
             index = i - j
-            if index < 0:
-                index = 0
-
-            manager_latent_state_current = manager_latent_state[i]
-            manager_latent_state_prev = manager_latent_state[index]
-            manager_latent_state_diff = manager_latent_state_current - manager_latent_state_prev
-            manager_goal_prev = manager_goal[index]
-            reward = reward + F.cosine_similarity(manager_latent_state_diff, manager_goal_prev, dim=0)
-        reward = reward / horizon
+            if index >= 0:
+                manager_latent_state_current = manager_latent_state[i]
+                manager_latent_state_prev = manager_latent_state[index]
+                manager_latent_state_diff = manager_latent_state_current - manager_latent_state_prev
+                manager_goal_prev = manager_goal[index]
+                reward = reward + F.cosine_similarity(manager_latent_state_diff, manager_goal_prev, dim=0)
+                reward_horizon += 1
+        if reward_horizon > 0:
+            reward = reward / reward_horizon
         fun_intrinsic_reward.append(reward)
 
     fun_intrinsic_reward = np.array(fun_intrinsic_reward)
+    sample_batch['fun_intrinsic_reward'] = fun_intrinsic_reward
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
@@ -152,7 +154,6 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     max_seq_len = torch.max(seq_lens)
     mask_orig = sequence_mask(seq_lens, max_seq_len)
     mask = torch.reshape(mask_orig, [-1])
-    batch_size = seq_lens.shape[0]
 
     logits, _ = model.from_batch(train_batch)
     manager_values, worker_values = model.value_function()
@@ -166,8 +167,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         (0, 0, 0, horizon),
         'constant',
         0)
-    manager_latent_state_diff = (manager_latent_state_future - manager_latent_state).reshape(-1).detach()
-    manager_goal = manager_goal.reshape(-1)
+    manager_latent_state_diff = (manager_latent_state_future - manager_latent_state).detach()
 
     horizon_mask = mask_orig
     horizon_mask[:, -horizon:] = 0
@@ -175,16 +175,16 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
 
     policy.manager_loss = -torch.sum(
         train_batch['manager_advantages']
-        * F.cosine_similarity(manager_latent_state_diff, manager_goal, dim=0)
-        * horizon_mask) / batch_size
+        * F.cosine_similarity(manager_latent_state_diff, manager_goal, dim=-1).reshape(-1)
+        * horizon_mask)
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = -torch.sum(dist.entropy() * mask) / batch_size
-    policy.pi_err = -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask) / batch_size
+    policy.entropy = -torch.sum(dist.entropy() * mask)
+    policy.pi_err = -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
 
-    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0)) / batch_size
-    policy.worker_value_err = torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0)) / batch_size
+    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
+    policy.worker_value_err = torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))
 
     overall_err = sum([
         policy.pi_err,
@@ -263,6 +263,7 @@ def stats(policy, train_batch):
         'manager_vf_loss': policy.manager_value_err.item(),
         'worker_vf_loss': policy.worker_value_err.item(),
         'cur_lr': policy._optimizers[0].param_groups[0]['lr'],
+        'fun_intrinsic_reward': train_batch['fun_intrinsic_reward'].mean().item()
     }
 
 def get_policy_class(config):
