@@ -74,27 +74,25 @@ def postprocesses_trajectories(
     Computes advantages.
     """
     horizon = 5
+    seq_len = sample_batch[SampleBatch.REWARDS].shape[0]
+
     manager_latent_state = torch.Tensor(sample_batch['manager_latent_state'])
     manager_goal = torch.Tensor(sample_batch['manager_goal'])
 
-    fun_intrinsic_reward = []
-    for i in range(manager_latent_state.shape[0]):
-        reward = 0
-        reward_horizon = 0
-        for j in range(1, horizon + 1):
-            index = i - j
-            if index >= 0:
+    fun_intrinsic_reward = np.zeros_like(sample_batch[SampleBatch.REWARDS])
+    for i in range(seq_len):
+        if (i < horizon):
+            fun_intrinsic_reward[i] = 0.0
+        else:
+            reward = 0.0
+            for j in range(1, horizon + 1):
                 manager_latent_state_current = manager_latent_state[i]
-                manager_latent_state_prev = manager_latent_state[index]
+                manager_latent_state_prev = manager_latent_state[j]
                 manager_latent_state_diff = manager_latent_state_current - manager_latent_state_prev
-                manager_goal_prev = manager_goal[index]
+                manager_goal_prev = manager_goal[j]
                 reward = reward + F.cosine_similarity(manager_latent_state_diff, manager_goal_prev, dim=0)
-                reward_horizon += 1
-        if reward_horizon > 0:
-            reward = reward / reward_horizon
-        fun_intrinsic_reward.append(reward)
+            fun_intrinsic_reward[i] = reward / horizon
 
-    fun_intrinsic_reward = np.array(fun_intrinsic_reward)
     sample_batch['fun_intrinsic_reward'] = fun_intrinsic_reward
 
     completed = sample_batch[SampleBatch.DONES][-1]
@@ -125,8 +123,7 @@ def postprocesses_trajectories(
     sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
-    sample_batch[SampleBatch.REWARDS] = (sample_batch[SampleBatch.REWARDS]
-        + fun_intrinsic_reward)
+    sample_batch[SampleBatch.REWARDS] += fun_intrinsic_reward
 
     # Compute advantages and value targets for the worker
     sample_batch[SampleBatch.VF_PREDS] = sample_batch['worker_values']
@@ -153,44 +150,42 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     seq_lens = train_batch['seq_lens']
     max_seq_len = torch.max(seq_lens)
     mask_orig = sequence_mask(seq_lens, max_seq_len)
-    mask = torch.reshape(mask_orig, [-1])
+
+    horizon = 5
+
+    manager_horizon_mask = mask_orig.clone()
+    manager_horizon_mask[:, -horizon:] = False
+    manager_horizon_mask = manager_horizon_mask.reshape(-1)
+
+    worker_horizon_mask = mask_orig.clone()
+    worker_horizon_mask[:, :horizon] = False
+    worker_horizon_mask = worker_horizon_mask.reshape(-1)
 
     logits, _ = model.from_batch(train_batch)
     manager_values, worker_values = model.value_function()
-
     manager_latent_state, manager_goal = model.manager_features()
 
-    horizon = 5
-    manager_latent_state_future = manager_latent_state[:, horizon:, :]
-    manager_latent_state_future = F.pad(
-        manager_latent_state_future,
-        (0, 0, 0, horizon),
-        'constant',
-        0)
+    manager_latent_state_future = torch.roll(manager_latent_state, -horizon, 1)
     manager_latent_state_diff = (manager_latent_state_future - manager_latent_state).detach()
-
-    horizon_mask = mask_orig
-    horizon_mask[:, -horizon:] = 0
-    horizon_mask = horizon_mask.reshape(-1)
 
     policy.manager_loss = -torch.sum(
         train_batch['manager_advantages']
         * F.cosine_similarity(manager_latent_state_diff, manager_goal, dim=-1).reshape(-1)
-        * horizon_mask)
+        * manager_horizon_mask)
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = -torch.sum(dist.entropy() * mask)
-    policy.pi_err = -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
+    policy.entropy = 0.0001 * -torch.sum(dist.entropy() * worker_horizon_mask)
+    policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * worker_horizon_mask)
 
-    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
-    policy.worker_value_err = torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))
+    policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * manager_horizon_mask, 2.0))
+    policy.worker_value_err = 0.01 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * worker_horizon_mask, 2.0))
 
     overall_err = sum([
         policy.pi_err,
-        policy.config['vf_loss_coeff'] * policy.manager_value_err,
-        policy.config['vf_loss_coeff'] * policy.worker_value_err,
-        policy.config['entropy_coeff'] * policy.entropy,
+        policy.manager_value_err,
+        policy.worker_value_err,
+        policy.entropy,
         policy.manager_loss,
     ])
     return overall_err
