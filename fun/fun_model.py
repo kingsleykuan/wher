@@ -138,9 +138,22 @@ class FuNModel(RecurrentNetwork, nn.Module):
         self.latent_state = latent_state
         self.goal = goal
 
-        action, [w_h, w_c] = self.worker(inputs, goal.detach(), state[2:])
+        horizon = 5
+        horizon_goals = state[4:]
+        if inputs.shape[1] == 1:
+            for i in range(horizon - 1):
+                horizon_goals[i] = horizon_goals[i + 1]
+            horizon_goals[horizon - 1] = goal.detach()
+            horizon_goal = torch.sum(torch.stack(horizon_goals), dim=0)
+        else:
+            horizon_goal = goal.detach().permute(0, 2, 1)
+            horizon_goal = F.pad(horizon_goal, (horizon - 1, 0))
+            horizon_goal = F.avg_pool1d(horizon_goal, horizon, 1) * horizon
+            horizon_goal = horizon_goal.permute(0, 2, 1)
 
-        return action, [m_h, m_c, w_h, w_c]
+        action, [w_h, w_c] = self.worker(inputs, horizon_goal, state[2:4])
+
+        return action, [m_h, m_c, w_h, w_c] + horizon_goals
 
     @override(ModelV2)
     def value_function(self):
@@ -161,8 +174,14 @@ class FuNModel(RecurrentNetwork, nn.Module):
             self.convnet.fc1.weight.new(
                 1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
         ]
+
+        horizon = 5
+        for _ in range(horizon):
+            h.append(self.convnet.fc1.weight.new(
+                1, 1, self.num_features_d).zero_().squeeze(0))
+
         return h
-    
+
     def manager_features(self):
         assert self.latent_state is not None, "must call forward() first"
         assert self.goal is not None, "must call forward() first"
