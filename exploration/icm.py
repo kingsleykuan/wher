@@ -162,7 +162,7 @@ class ICMNet(nn.Module):
         inv_in = torch.cat((current_feature, next_feature), 1)
         action_pred = self.inv_net(inv_in)
 
-        return self._calc_loss(next_feature, next_feature_pred, action_pred, action), F.mse_loss(next_feature_pred, next_feature) * 0.5
+        return self._calc_loss(next_feature, next_feature_pred, action_pred, action), F.mse_loss(next_feature_pred, next_feature, reduction='none') * 0.5
 
 
     def _calc_loss(self, features, feature_preds, action_preds, actions):

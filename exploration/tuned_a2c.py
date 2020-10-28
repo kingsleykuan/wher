@@ -93,8 +93,8 @@ def add_advantages(policy,
         torch.Tensor(sample_batch[SampleBatch.ACTIONS])
     )
     exploration_rewards = exploration_rewards.numpy()
-    sample_batch[SampleBatch.REWARDS] += exploration_rewards
-    policy.exploration_rewards = exploration_rewards
+    sample_batch[SampleBatch.REWARDS] += exploration_rewards.mean()
+    sample_batch['exploration_rewards'] = exploration_rewards
 
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
@@ -181,7 +181,7 @@ def stats(policy, train_batch):
         'vf_loss': policy.value_err.item(),
         'cur_lr': policy._optimizers[0].param_groups[0]['lr'],
         'icm_loss': policy.icm_loss.item(),
-        'exploration_rewards': policy.exploration_rewards.item()
+        'exploration_rewards': train_batch['exploration_rewards'].mean().item()
     }
 
 def get_policy_class(config):
