@@ -81,17 +81,15 @@ def postprocesses_trajectories(
 
     fun_intrinsic_reward = np.zeros_like(sample_batch[SampleBatch.REWARDS])
     for i in range(seq_len):
-        if (i < horizon):
-            fun_intrinsic_reward[i] = 0.0
-        else:
-            reward = 0.0
-            for j in range(1, horizon + 1):
+        reward = 0.0
+        for j in range(1, horizon + 1):
+            if i - j >= 0:
                 manager_latent_state_current = manager_latent_state[i]
-                manager_latent_state_prev = manager_latent_state[j]
+                manager_latent_state_prev = manager_latent_state[i - j]
                 manager_latent_state_diff = manager_latent_state_current - manager_latent_state_prev
-                manager_goal_prev = manager_goal[j]
+                manager_goal_prev = manager_goal[i - j]
                 reward = reward + F.cosine_similarity(manager_latent_state_diff, manager_goal_prev, dim=0)
-            fun_intrinsic_reward[i] = reward / horizon
+        fun_intrinsic_reward[i] = reward / horizon
 
     sample_batch['fun_intrinsic_reward'] = fun_intrinsic_reward
 
@@ -175,11 +173,11 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = 0.0001 * -torch.sum(dist.entropy() * worker_horizon_mask)
+    policy.entropy = 0.01 * -torch.sum(dist.entropy() * worker_horizon_mask)
     policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * worker_horizon_mask)
 
     policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * manager_horizon_mask, 2.0))
-    policy.worker_value_err = 0.01 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * worker_horizon_mask, 2.0))
+    policy.worker_value_err = 0.05 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * worker_horizon_mask, 2.0))
 
     overall_err = sum([
         policy.pi_err,
