@@ -31,7 +31,6 @@ class SmallConvNet(nn.Module):
         x = F.relu(self.fc1(x))
         return x
 
-# TODO: Dilated LSTM
 class ManagerModule(nn.Module):
     """
     """
@@ -49,11 +48,59 @@ class ManagerModule(nn.Module):
         # Input has shape [Batch, Time, Features]
         latent_state = F.relu(self.fc_m_space(z))
 
-        goal, [h, c] = self.m_rnn(latent_state,
-            [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)])
+        horizon = 5
+
+        # Extract states and goals over past horizon
+        h_horizon = state[:horizon]
+        c_horizon = state[horizon:horizon * 2]
+        goal_horizon = state[horizon * 2:]
+
+        # Sample Batch
+        if z.shape[1] == 1:
+            # Dilated LSTM
+            h = torch.unsqueeze(h_horizon[0], 0)
+            c = torch.unsqueeze(c_horizon[0], 0)
+            goal, [h, c] = self.m_rnn(latent_state, [h, c])
+
+            # Update past horizon like a queue
+            for i in range(horizon - 1):
+                h_horizon[i] = h_horizon[i + 1]
+                c_horizon[i] = c_horizon[i + 1]
+                goal_horizon[i] = goal_horizon[i + 1]
+            h_horizon[-1] = torch.squeeze(h, 0)
+            c_horizon[-1] = torch.squeeze(c, 0)
+            goal_horizon[-1] = goal
+
+            # Pool goal over past horizon
+            goal = torch.sum(torch.stack(goal_horizon), dim=0)
+        # Train Batch
+        else:
+            goals = []
+            # Dilated LSTM
+            # 1) Splits training batch by taking every i-th element
+            # 2) Takes initial state from past states horizon
+            # 3) Runs LSTM over splits
+            # 4) Interleaves outputs
+            for i in range(horizon):
+                latent_state_dilated = latent_state[:,i::horizon,:]
+                h = torch.unsqueeze(h_horizon[i], 0)
+                c = torch.unsqueeze(c_horizon[i], 0)
+
+                goal, [h, c] = self.m_rnn(latent_state_dilated, [h, c])
+                goals.append(goal)
+            goal = torch.stack(goals, dim=2).reshape(latent_state.shape)
+
+            # Pool goal over past horizon
+            # 1) Concat past goal horizon with goals
+            # 2) Run 1D sum pooling to pool goals
+            goal = torch.cat((torch.cat(goal_horizon[1:], dim=1), goal), dim=1)
+            goal = goal.permute(0, 2, 1)
+            goal = F.avg_pool1d(goal, horizon, 1) * horizon
+            goal = goal.permute(0, 2, 1)
+
         goal = goal / goal.norm(dim=-1, keepdim=True)
-        return latent_state, goal, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
-    
+        return latent_state, goal, h_horizon + c_horizon + goal_horizon
+
     def value_function(self, z):
         return self.critic(z)
 
@@ -95,8 +142,6 @@ class WorkerModule(nn.Module):
     def value_function(self, z):
         return self.critic(z)
 
-# TODO: Dilated LSTM states
-# TODO: Pool g over horizon
 class FuNModel(RecurrentNetwork, nn.Module):
     """
     """
@@ -132,28 +177,41 @@ class FuNModel(RecurrentNetwork, nn.Module):
 
     @override(RecurrentNetwork)
     def forward_rnn(self, inputs, state, seq_lens):
+        horizon = 5
+
+        worker_states = state[:2]
+        manager_states = state[2:2 + horizon * 3]
+        horizon_goals = state[2 + horizon * 3:]
+
         self.z = inputs
 
-        latent_state, goal, [m_h, m_c] = self.manager(inputs, state[:2])
+        latent_state, goal, manager_states = self.manager(
+            inputs, manager_states)
         self.latent_state = latent_state
         self.goal = goal
 
-        horizon = 5
-        horizon_goals = state[4:]
+        # Sample Batch
         if inputs.shape[1] == 1:
+            # Update horizon like a queue
             for i in range(horizon - 1):
                 horizon_goals[i] = horizon_goals[i + 1]
-            horizon_goals[horizon - 1] = goal.detach()
+            horizon_goals[-1] = goal.detach()
+
+            # Pool goal over past horizon
             horizon_goal = torch.sum(torch.stack(horizon_goals), dim=0)
+        # Train Batch
         else:
-            horizon_goal = goal.detach().permute(0, 2, 1)
-            horizon_goal = F.pad(horizon_goal, (horizon - 1, 0))
+            # Pool goal over past horizon
+            # 1) Concat past goal horizon with goals
+            # 2) Run 1D sum pooling to pool goals
+            horizon_goal = torch.cat(
+                (torch.cat(horizon_goals[1:], dim=1), goal.detach()), dim=1)
+            horizon_goal = horizon_goal.permute(0, 2, 1)
             horizon_goal = F.avg_pool1d(horizon_goal, horizon, 1) * horizon
             horizon_goal = horizon_goal.permute(0, 2, 1)
 
-        action, [w_h, w_c] = self.worker(inputs, horizon_goal, state[2:4])
-
-        return action, [m_h, m_c, w_h, w_c] + horizon_goals
+        action, worker_states = self.worker(inputs, horizon_goal, worker_states)
+        return action, worker_states + manager_states + horizon_goals
 
     @override(ModelV2)
     def value_function(self):
@@ -166,16 +224,24 @@ class FuNModel(RecurrentNetwork, nn.Module):
     def get_initial_state(self):
         h = [
             self.convnet.fc1.weight.new(
-                1, self.num_features_d).zero_().squeeze(0),
-            self.convnet.fc1.weight.new(
-                1, self.num_features_d).zero_().squeeze(0),
-            self.convnet.fc1.weight.new(
                 1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
             self.convnet.fc1.weight.new(
                 1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
         ]
 
         horizon = 5
+
+        # Manager Dilated LSTM States
+        for _ in range(horizon * 2):
+            h.append(self.convnet.fc1.weight.new(
+                1, self.num_features_d).zero_().squeeze(0))
+
+        # Manager Goals Horizon
+        for _ in range(horizon):
+            h.append(self.convnet.fc1.weight.new(
+                1, 1, self.num_features_d).zero_().squeeze(0))
+
+        # Horizon Goals
         for _ in range(horizon):
             h.append(self.convnet.fc1.weight.new(
                 1, 1, self.num_features_d).zero_().squeeze(0))
