@@ -148,16 +148,13 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     seq_lens = train_batch['seq_lens']
     max_seq_len = torch.max(seq_lens)
     mask_orig = sequence_mask(seq_lens, max_seq_len)
+    mask = torch.reshape(mask_orig, [-1])
 
     horizon = 5
 
     manager_horizon_mask = mask_orig.clone()
     manager_horizon_mask[:, -horizon:] = False
     manager_horizon_mask = manager_horizon_mask.reshape(-1)
-
-    worker_horizon_mask = mask_orig.clone()
-    worker_horizon_mask[:, :horizon] = False
-    worker_horizon_mask = worker_horizon_mask.reshape(-1)
 
     logits, _ = model.from_batch(train_batch)
     manager_values, worker_values = model.value_function()
@@ -173,11 +170,11 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = 0.01 * -torch.sum(dist.entropy() * worker_horizon_mask)
-    policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * worker_horizon_mask)
+    policy.entropy = 0.01 * -torch.sum(dist.entropy() * mask)
+    policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
 
-    policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * manager_horizon_mask, 2.0))
-    policy.worker_value_err = 0.05 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * worker_horizon_mask, 2.0))
+    policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
+    policy.worker_value_err = 0.02 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))
 
     overall_err = sum([
         policy.pi_err,
