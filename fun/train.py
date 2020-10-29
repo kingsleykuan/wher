@@ -13,8 +13,8 @@ def main():
 
     # Effective batch size is 16*16*20 = 5120
     config['num_workers'] = 16
-    config['num_envs_per_worker'] = 16
-    config['rollout_fragment_length'] = 20
+    config['num_envs_per_worker'] = 2
+    config['rollout_fragment_length'] = 100
 
     config['env'] = tune.grid_search(
         [
@@ -34,7 +34,7 @@ def main():
     config['cyclic_lr_base_lr'] = 1e-4
     config['cyclic_lr_max_lr'] = 1e-3
     config['cyclic_lr_step_size'] = 200
-    config['grad_clip'] = 2000.0
+    config['grad_clip'] = 6000.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -48,14 +48,19 @@ def main():
     config['model']['custom_model'] = 'FuNModel'
     config['model']['framestack'] = True
     config['model']['use_lstm'] = True
-    config['model']['max_seq_len'] = 20
+    config['model']['max_seq_len'] = 100
+
+    # FuN Config
+    config['fun_horizon'] = 10
+    config['model']['custom_model_config'] = {}
+    config['model']['custom_model_config']['fun_horizon'] = 10
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
     tune.run(
         FuNTrainer,
         config=config,
-        stop={'timesteps_total': 10000000},
+        stop={'timesteps_total': 100000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

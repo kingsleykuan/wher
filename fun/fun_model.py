@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,10 +35,11 @@ class SmallConvNet(nn.Module):
 class ManagerModule(nn.Module):
     """
     """
-    def __init__(self, num_features_d):
+    def __init__(self, num_features_d, horizon):
         super(ManagerModule, self).__init__()
 
         self.num_features_d = num_features_d
+        self.horizon = horizon
 
         self.fc_m_space = nn.Linear(num_features_d, num_features_d)
         self.m_rnn = nn.LSTM(num_features_d, num_features_d, batch_first=True)
@@ -48,7 +50,7 @@ class ManagerModule(nn.Module):
         # Input has shape [Batch, Time, Features]
         latent_state = F.relu(self.fc_m_space(z))
 
-        horizon = 5
+        horizon = self.horizon
 
         # Extract states and goals over past horizon
         h_horizon = state[:horizon]
@@ -81,14 +83,20 @@ class ManagerModule(nn.Module):
             # 2) Takes initial state from past states horizon
             # 3) Runs LSTM over splits
             # 4) Interleaves outputs
+            pad_len = float(latent_state.shape[1]) / float(horizon)
+            pad_len = (math.ceil(pad_len) * horizon) - latent_state.shape[1]
+            latent_state_padded = F.pad(latent_state, (0, 0, 0, pad_len))
+
             for i in range(horizon):
-                latent_state_dilated = latent_state[:,i::horizon,:]
+                latent_state_dilated = latent_state_padded[:,i::horizon,:]
                 h = torch.unsqueeze(h_horizon[i], 0)
                 c = torch.unsqueeze(c_horizon[i], 0)
 
                 goal, [h, c] = self.m_rnn(latent_state_dilated, [h, c])
                 goals.append(goal)
-            goal = torch.stack(goals, dim=2).reshape(latent_state.shape)
+
+            goal = torch.stack(goals, dim=2).reshape(latent_state_padded.shape)
+            goal = goal[:, :latent_state.shape[1], :]
 
             # Pool goal over past horizon
             # 1) Concat past goal horizon with goals
@@ -145,7 +153,7 @@ class WorkerModule(nn.Module):
 class FuNModel(RecurrentNetwork, nn.Module):
     """
     """
-    def __init__(self, obs_space, action_space, num_outputs, model_config, name):
+    def __init__(self, obs_space, action_space, num_outputs, model_config, name, fun_horizon):
         RecurrentNetwork.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
 
@@ -153,6 +161,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
         self.num_features_d = 256
         self.num_features_k = 16
         self.num_outputs = num_outputs
+        self.horizon = fun_horizon
 
         self.convnet = SmallConvNet(
             self.num_input_channels, self.num_features_d)
@@ -160,7 +169,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
 
         self.z = None
         
-        self.manager = ManagerModule(self.num_features_d)
+        self.manager = ManagerModule(self.num_features_d, self.horizon)
         self.latent_state = None
         self.goal = None
 
@@ -177,7 +186,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
 
     @override(RecurrentNetwork)
     def forward_rnn(self, inputs, state, seq_lens):
-        horizon = 5
+        horizon = self.horizon
 
         worker_states = state[:2]
         manager_states = state[2:2 + horizon * 3]
@@ -229,7 +238,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
                 1, self.num_features_k * self.num_outputs).zero_().squeeze(0),
         ]
 
-        horizon = 5
+        horizon = self.horizon
 
         # Manager Dilated LSTM States
         for _ in range(horizon * 2):

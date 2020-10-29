@@ -38,6 +38,9 @@ FUN_CONFIG = A2CTrainer.merge_trainer_configs(
         'grad_clip': 0.5,
         'epsilon': 1e-8,
 
+        'fun_horizon': 10,
+        'model': { 'custom_model_config': { 'fun_horizon': 10 } },
+
         '_use_trajectory_view_api': False,
     },
     _allow_unknown_configs=True,
@@ -73,7 +76,7 @@ def postprocesses_trajectories(
 
     Computes advantages.
     """
-    horizon = 5
+    horizon = policy.config['fun_horizon']
     seq_len = sample_batch[SampleBatch.REWARDS].shape[0]
 
     manager_latent_state = torch.Tensor(sample_batch['manager_latent_state'])
@@ -150,7 +153,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     mask_orig = sequence_mask(seq_lens, max_seq_len)
     mask = torch.reshape(mask_orig, [-1])
 
-    horizon = 5
+    horizon = policy.config['fun_horizon']
 
     manager_horizon_mask = mask_orig.clone()
     manager_horizon_mask[:, -horizon:] = False
@@ -170,7 +173,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = 0.01 * -torch.sum(dist.entropy() * mask)
+    policy.entropy = 0.0001 * -torch.sum(dist.entropy() * mask)
     policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
 
     policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
