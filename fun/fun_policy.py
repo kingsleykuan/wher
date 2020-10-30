@@ -125,6 +125,8 @@ def postprocesses_trajectories(
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
     sample_batch[SampleBatch.REWARDS] += fun_intrinsic_reward
+    sample_batch[SampleBatch.REWARDS] = np.clip(
+        sample_batch[SampleBatch.REWARDS], -1, 1)
 
     # Compute advantages and value targets for the worker
     sample_batch[SampleBatch.VF_PREDS] = sample_batch['worker_values']
@@ -174,10 +176,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
     policy.entropy = 0.0001 * -torch.sum(dist.entropy() * mask)
-    policy.pi_err = 0.5 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
+    policy.pi_err = -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)
 
-    policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
-    policy.worker_value_err = 0.02 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))
+    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))
+    policy.worker_value_err = torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))
 
     overall_err = sum([
         policy.pi_err,

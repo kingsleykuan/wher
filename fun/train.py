@@ -34,7 +34,7 @@ def main():
     config['cyclic_lr_base_lr'] = 1e-4
     config['cyclic_lr_max_lr'] = 1e-3
     config['cyclic_lr_step_size'] = 200
-    config['grad_clip'] = 6000.0
+    config['grad_clip'] = 30000.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}

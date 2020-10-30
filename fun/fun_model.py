@@ -43,6 +43,8 @@ class ManagerModule(nn.Module):
 
         self.fc_m_space = nn.Linear(num_features_d, num_features_d)
         self.m_rnn = nn.LSTM(num_features_d, num_features_d, batch_first=True)
+        # Init forget gate bias to 1 for improved learning
+        self.m_rnn.bias_ih_l0.data[num_features_d:num_features_d * 2].fill_(1)
 
         self.critic = nn.Linear(num_features_d, 1)
 
@@ -123,8 +125,11 @@ class WorkerModule(nn.Module):
         self.num_actions = num_actions
 
         self.phi = nn.Linear(num_features_d, num_features_k, bias=False)
-        self.w_rnn = nn.LSTM(
-            num_features_d, num_features_k * num_actions, batch_first=True)
+
+        hidden_size = num_features_k * num_actions
+        self.w_rnn = nn.LSTM(num_features_d, hidden_size, batch_first=True)
+        # Init forget gate bias to 1 for improved learning
+        self.w_rnn.bias_ih_l0.data[hidden_size:hidden_size * 2].fill_(1)
 
         self.critic = nn.Linear(num_features_d, 1)
 
