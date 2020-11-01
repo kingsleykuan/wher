@@ -184,6 +184,8 @@ class FuNModel(RecurrentNetwork, nn.Module):
         self.z = None
         
         self.manager = ManagerModule(self.num_features_d, self.horizon)
+        self.random_select = None
+        self.random_goal = None
         self.latent_state = None
         self.goal = None
 
@@ -210,6 +212,22 @@ class FuNModel(RecurrentNetwork, nn.Module):
 
         latent_state, goal, manager_states = self.manager(
             inputs, manager_states)
+
+        if inputs.shape[1] == 1:
+            random_select = torch.rand(goal.shape[0]) > 0.01
+            random_goal = torch.normal(
+                goal.clone().detach().fill_(0),
+                goal.clone().detach().fill_(1))
+            random_goal = random_goal / random_goal.norm(dim=-1, keepdim=True)
+            random_goal = random_goal * ~random_select.unsqueeze(-1).unsqueeze(-1)
+            goal = goal * random_select.unsqueeze(-1).unsqueeze(-1)
+            goal += random_goal
+            self.random_select = random_select
+            self.random_goal = random_goal
+        else:
+            goal = goal * self.random_select.unsqueeze(-1)
+            goal += self.random_goal
+
         self.latent_state = latent_state
         self.goal = goal
 
@@ -275,3 +293,8 @@ class FuNModel(RecurrentNetwork, nn.Module):
         assert self.latent_state is not None, "must call forward() first"
         assert self.goal is not None, "must call forward() first"
         return self.latent_state, self.goal
+
+    def manager_random(self):
+        assert self.random_select is not None, "must call forward() first"
+        assert self.random_goal is not None, "must call forward() first"
+        return self.random_select, self.random_goal

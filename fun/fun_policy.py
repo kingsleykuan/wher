@@ -59,11 +59,16 @@ def model_extra_out(policy, input_dict, state_batches, model, action_dist):
     manager_latent_state = torch.squeeze(manager_latent_state, 1)
     manager_goal = torch.squeeze(manager_goal, 1)
 
+    random_select, random_goal = model.manager_random()
+    random_goal = torch.squeeze(random_goal, 1)
+
     return {
         'manager_values': manager_values,
         'worker_values': worker_values,
         'manager_latent_state': manager_latent_state,
         'manager_goal': manager_goal,
+        'random_select': random_select,
+        'random_goal': random_goal,
     }
 
 def postprocesses_trajectories(
@@ -161,6 +166,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     manager_horizon_mask = mask_orig.clone()
     manager_horizon_mask[:, -horizon:] = False
     manager_horizon_mask = manager_horizon_mask.reshape(-1)
+
+    # Hacky way of passing data from sample batch to train batch
+    model.random_select = train_batch['random_select'].reshape((batch_size, -1))
+    model.random_goal = train_batch['random_goal'].reshape((batch_size, max_seq_len, -1))
 
     logits, _ = model.from_batch(train_batch)
     manager_values, worker_values = model.value_function()
