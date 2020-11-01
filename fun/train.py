@@ -13,8 +13,8 @@ def main():
 
     # Effective batch size is 16*16*20 = 5120
     config['num_workers'] = 16
-    config['num_envs_per_worker'] = 2
-    config['rollout_fragment_length'] = 100
+    config['num_envs_per_worker'] = 4
+    config['rollout_fragment_length'] = 50
 
     config['env'] = tune.grid_search(
         [
@@ -29,12 +29,12 @@ def main():
     # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 1e-4
+    config['lr'] = 5e-4
     config['lr_mode'] = 'cyclic'
     config['cyclic_lr_base_lr'] = 1e-4
     config['cyclic_lr_max_lr'] = 1e-3
     config['cyclic_lr_step_size'] = 200
-    config['grad_clip'] = 30000.0
+    config['grad_clip'] = 20.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -48,12 +48,12 @@ def main():
     config['model']['custom_model'] = 'FuNModel'
     config['model']['framestack'] = True
     config['model']['use_lstm'] = True
-    config['model']['max_seq_len'] = 100
+    config['model']['max_seq_len'] = 50
 
     # FuN Config
-    config['fun_horizon'] = 10
+    config['fun_horizon'] = 5
     config['model']['custom_model_config'] = {}
-    config['model']['custom_model_config']['fun_horizon'] = 10
+    config['model']['custom_model_config']['fun_horizon'] = 5
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
