@@ -20,6 +20,7 @@ def main():
         [
             'BreakoutNoFrameskip-v4',
             'MsPacmanNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -31,10 +32,10 @@ def main():
     # Override policy config for experiments
     config['lr'] = 5e-4
     config['lr_mode'] = 'cyclic'
-    config['cyclic_lr_base_lr'] = 1e-4
-    config['cyclic_lr_max_lr'] = 1e-3
+    config['cyclic_lr_base_lr'] = 5e-5
+    config['cyclic_lr_max_lr'] = 5e-4
     config['cyclic_lr_step_size'] = 200
-    config['grad_clip'] = 20.0
+    config['grad_clip'] = 5.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}

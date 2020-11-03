@@ -55,6 +55,7 @@ class ManagerModule(nn.Module):
         # Init forget gate bias to 1 for improved learning
         self.m_rnn.bias_ih_l0.data[num_features_d:num_features_d * 2].fill_(1)
 
+        self.critic_input = None
         self.critic = nn.Linear(num_features_d, 1)
 
     def forward(self, z, state):
@@ -117,11 +118,12 @@ class ManagerModule(nn.Module):
             goal = F.avg_pool1d(goal, horizon, 1) * horizon
             goal = goal.permute(0, 2, 1)
 
+        self.critic_input = goal
         goal = goal / goal.norm(dim=-1, keepdim=True)
         return latent_state, goal, h_horizon + c_horizon + goal_horizon
 
-    def value_function(self, z):
-        return self.critic(z)
+    def value_function(self):
+        return self.critic(self.critic_input)
 
 class WorkerModule(nn.Module):
     """
@@ -140,7 +142,8 @@ class WorkerModule(nn.Module):
         # Init forget gate bias to 1 for improved learning
         self.w_rnn.bias_ih_l0.data[hidden_size:hidden_size * 2].fill_(1)
 
-        self.critic = nn.Linear(num_features_d, 1)
+        self.critic_input = None
+        self.critic = nn.Linear(hidden_size, 1)
 
     def forward(self, z, goal, state):
         # Input has shape [Batch, Time, Features]
@@ -148,6 +151,7 @@ class WorkerModule(nn.Module):
 
         embedding_matrix, [h, c] = self.w_rnn(z,
             [torch.unsqueeze(state[0], 0), torch.unsqueeze(state[1], 0)])
+        self.critic_input = embedding_matrix
         embedding_matrix = torch.reshape(
             embedding_matrix, [
                 embedding_matrix.shape[0],
@@ -161,8 +165,8 @@ class WorkerModule(nn.Module):
         
         return action, [torch.squeeze(h, 0), torch.squeeze(c, 0)]
 
-    def value_function(self, z):
-        return self.critic(z)
+    def value_function(self):
+        return self.critic(self.critic_input)
 
 class FuNModel(RecurrentNetwork, nn.Module):
     """
@@ -214,7 +218,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
             inputs, manager_states)
 
         if inputs.shape[1] == 1:
-            random_select = torch.rand(goal.shape[0]) > 0.01
+            random_select = torch.rand(goal.shape[0]) > 0.05
             random_goal = torch.normal(
                 goal.clone().detach().fill_(0),
                 goal.clone().detach().fill_(1))
@@ -256,9 +260,8 @@ class FuNModel(RecurrentNetwork, nn.Module):
 
     @override(ModelV2)
     def value_function(self):
-        assert self.z is not None, "must call forward() first"
-        manager_values = torch.reshape(self.manager.value_function(self.z), [-1])
-        worker_values = torch.reshape(self.worker.value_function(self.z), [-1])
+        manager_values = torch.reshape(self.manager.value_function(), [-1])
+        worker_values = torch.reshape(self.worker.value_function(), [-1])
         return manager_values, worker_values
 
     @override(ModelV2)
