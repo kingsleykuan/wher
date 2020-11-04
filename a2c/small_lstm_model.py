@@ -5,6 +5,15 @@ from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.torch.recurrent_net import RecurrentNetwork
 from ray.rllib.utils.annotations import override
 
+@torch.jit.script
+def mish(input):
+    '''
+    Applies the mish function element-wise:
+    mish(x) = x * tanh(softplus(x)) = x * tanh(ln(1 + exp(x)))
+    See additional documentation for mish class.
+    '''
+    return input * torch.tanh(F.softplus(input))
+
 class SmallConvNet(nn.Module):
     """
     Small PyTorch CNN.
@@ -17,10 +26,10 @@ class SmallConvNet(nn.Module):
         self.conv4 = nn.Conv2d(32, 32, 3, 2, 1)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
+        x = mish(self.conv1(x))
+        x = mish(self.conv2(x))
+        x = mish(self.conv3(x))
+        x = mish(self.conv4(x))
         x = x.reshape((-1, 3 * 3 * 32))
         return x
 

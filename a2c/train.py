@@ -20,6 +20,7 @@ def main():
         [
             'BreakoutNoFrameskip-v4',
             'MsPacmanNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
