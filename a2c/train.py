@@ -18,8 +18,7 @@ def main():
 
     config['env'] = tune.grid_search(
         [
-            'BreakoutNoFrameskip-v4',
-            'MsPacmanNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -48,7 +47,7 @@ def main():
     tune.run(
         TunedA2CTrainer,
         config=config,
-        stop={'timesteps_total': 10000000},
+        stop={'timesteps_total': 100000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

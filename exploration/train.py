@@ -18,7 +18,7 @@ def main():
 
     config['env'] = tune.grid_search(
         [
-            'BreakoutNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -28,7 +28,7 @@ def main():
     config['lr'] = 1e-3
     config['end_lr'] = 1e-4
     config['anneal_timesteps'] = 10000000
-    config['grad_clip'] = 0.5
+    config['grad_clip'] = 20.0
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -45,7 +45,7 @@ def main():
     tune.run(
         TunedA2CTrainer,
         config=config,
-        stop={'timesteps_total': 10000000},
+        stop={'timesteps_total': 100000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

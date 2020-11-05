@@ -77,7 +77,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         policy.pi_err, #TODO tune lambda here
         policy.config['vf_loss_coeff'] * policy.value_err,
         policy.config['entropy_coeff'] * policy.entropy,
-        icm_loss #TODO multiply by 10?
+        10 * icm_loss #TODO multiply by 10?
     ])
     return overall_err
 
@@ -92,8 +92,8 @@ def add_advantages(policy,
         torch.Tensor(sample_batch[SampleBatch.NEXT_OBS]),
         torch.Tensor(sample_batch[SampleBatch.ACTIONS])
     )
-    exploration_rewards = exploration_rewards.numpy()
-    sample_batch[SampleBatch.REWARDS] += exploration_rewards.mean()
+    exploration_rewards = exploration_rewards.mean(dim=-1).numpy()
+    sample_batch[SampleBatch.REWARDS] += exploration_rewards
     sample_batch['exploration_rewards'] = exploration_rewards
 
     completed = sample_batch[SampleBatch.DONES][-1]

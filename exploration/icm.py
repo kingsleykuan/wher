@@ -168,8 +168,8 @@ class ICMNet(nn.Module):
     def _calc_loss(self, features, feature_preds, action_preds, actions):
 
         # forward loss
-        loss_fwd = F.mse_loss(feature_preds, features)
+        loss_fwd = 0.5 * F.mse_loss(feature_preds, features)
         # inverse loss
         loss_inv = F.cross_entropy(action_preds.view(-1, self.num_actions), actions.long())
 
-        return loss_fwd + loss_inv # TODO tune beta here
+        return 0.2 * loss_fwd + 0.8 * loss_inv # TODO tune beta here
