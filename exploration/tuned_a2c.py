@@ -76,10 +76,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
     policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
     overall_err = sum([
-        policy.pi_err,
+        0.1 * policy.pi_err,  # TODO lambda
         policy.config['vf_loss_coeff'] * policy.value_err,
         policy.config['entropy_coeff'] * policy.entropy,
-        10.0 * icm_loss
+        icm_loss
     ])
     return overall_err
 
