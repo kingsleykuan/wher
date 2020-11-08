@@ -57,8 +57,11 @@ class SmallConvModel(TorchModelV2, nn.Module):
         value_out = self.value_branch(self.conv_features).squeeze(1)
         return value_out
 
-    def icm_forward(self, obs, next_obs, actions):
-        """
-        returns loss, intrinsic_reward
-        """
-        return self.icm_net(obs.permute(0, 3, 1, 2).float(), next_obs.permute(0, 3, 1, 2).float(), actions)
+    def icm_forward(self, obs, next_obs):
+        return self.icm_net(obs.permute(0, 3, 1, 2).float(), next_obs.permute(0, 3, 1, 2).float())
+
+    def icm_fwd_forward(self, actions):
+        return self.icm_net.fwd_forward(actions)
+
+    def icm_inv_forward(self, actions):
+        return self.icm_net.inv_forward(actions)
