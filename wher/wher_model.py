@@ -6,6 +6,8 @@ from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.torch.recurrent_net import RecurrentNetwork
 from ray.rllib.utils.annotations import override
 
+from wher.icm import ICMNet
+
 class SmallConvNet(nn.Module):
     """
     Small PyTorch CNN.
@@ -159,7 +161,7 @@ class WorkerModule(nn.Module):
     def value_function(self):
         return self.critic(self.critic_input)
 
-class FuNModel(RecurrentNetwork, nn.Module):
+class WherModel(RecurrentNetwork, nn.Module):
     """
     """
     def __init__(self, obs_space, action_space, num_outputs, model_config, name, fun_horizon):
@@ -187,6 +189,8 @@ class FuNModel(RecurrentNetwork, nn.Module):
         self.worker = WorkerModule(
             self.num_features_d, self.num_features_k, self.num_outputs)
 
+        self.icm_net = ICMNet(4, num_outputs, in_size=288, feat_size=256)
+
     @override(RecurrentNetwork)
     def forward(self, input_dict, state, seq_lens):
         x = input_dict['obs'].float().permute(0, 3, 1, 2)
@@ -209,7 +213,7 @@ class FuNModel(RecurrentNetwork, nn.Module):
             inputs, manager_states)
 
         if inputs.shape[1] == 1:
-            random_select = torch.rand(goal.shape[0], device=goal.device) > 0.05
+            random_select = torch.rand(goal.shape[0], device=goal.device) > -1
             random_goal = torch.normal(
                 goal.clone().detach().fill_(0),
                 goal.clone().detach().fill_(1))
@@ -292,3 +296,12 @@ class FuNModel(RecurrentNetwork, nn.Module):
         assert self.random_select is not None, "must call forward() first"
         assert self.random_goal is not None, "must call forward() first"
         return self.random_select, self.random_goal
+
+    def icm_forward(self, obs, next_obs):
+        return self.icm_net(obs.permute(0, 3, 1, 2).float(), next_obs.permute(0, 3, 1, 2).float())
+
+    def icm_fwd_forward(self, actions):
+        return self.icm_net.fwd_forward(actions)
+
+    def icm_inv_forward(self, actions):
+        return self.icm_net.inv_forward(actions)
