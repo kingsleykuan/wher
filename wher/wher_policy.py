@@ -81,6 +81,9 @@ def postprocesses_trajectories(
 
     Computes advantages.
     """
+    # --------------------------------
+    # Compute FuN manager intrinsic rewards
+    # --------------------------------
     horizon = policy.config['fun_horizon']
     seq_len = sample_batch[SampleBatch.REWARDS].shape[0]
 
@@ -101,6 +104,9 @@ def postprocesses_trajectories(
 
     sample_batch['fun_intrinsic_reward'] = fun_intrinsic_reward
 
+    # --------------------------------
+    # Compute ICM exploration intrinsic rewards
+    # --------------------------------
     _ = policy.model.icm_forward(
         torch.Tensor(sample_batch[SampleBatch.OBS]),
         torch.Tensor(sample_batch[SampleBatch.NEXT_OBS])
@@ -109,6 +115,9 @@ def postprocesses_trajectories(
     exploration_rewards = exploration_rewards.numpy()
     sample_batch['exploration_rewards'] = exploration_rewards
 
+    # --------------------------------
+    # Estimate last reward if trajectory was truncated
+    # --------------------------------
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
         manager_last_r = 0.0
@@ -128,8 +137,12 @@ def postprocesses_trajectories(
         manager_last_r = manager_last_r[0]
         worker_last_r = worker_last_r[0]
 
+    # --------------------------------
+    # Add ICM exploration intrinsic reward to manager
+    # and compute manager advantages / value targets
+    # --------------------------------
     original_rewards = sample_batch[SampleBatch.REWARDS]
-    sample_batch[SampleBatch.REWARDS] += exploration_rewards
+    sample_batch[SampleBatch.REWARDS] += 1.0 * exploration_rewards
     # sample_batch[SampleBatch.REWARDS] = np.clip(
     #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
@@ -142,8 +155,13 @@ def postprocesses_trajectories(
     sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
+    # --------------------------------
+    # Add FuN manager and ICM exploration intrinsic rewards to worker
+    # and compute worker advantages / value targets
+    # --------------------------------
     sample_batch[SampleBatch.REWARDS] = original_rewards
     sample_batch[SampleBatch.REWARDS] += fun_intrinsic_reward
+    sample_batch[SampleBatch.REWARDS] += 0.0 * exploration_rewards
     # sample_batch[SampleBatch.REWARDS] = np.clip(
     #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
@@ -157,6 +175,7 @@ def postprocesses_trajectories(
     sample_batch['worker_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
     # WARNING: These values are only used temporarily. Do not use:
+    # sample_batch[SampleBatch.REWARDS]
     # sample_batch[SampleBatch.VF_PREDS]
     # sample_batch[Postprocessing.ADVANTAGES]
     # sample_batch[Postprocessing.VALUE_TARGETS]
