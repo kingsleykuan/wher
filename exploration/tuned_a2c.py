@@ -64,7 +64,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     icm_fwd_loss = model.icm_fwd_forward(train_batch[SampleBatch.ACTIONS])
     icm_inv_loss = model.icm_inv_forward(train_batch[SampleBatch.ACTIONS])
     icm_loss = 0.2 * icm_fwd_loss + 0.8 * icm_inv_loss
-    icm_loss = torch.sum(icm_loss)
+    icm_loss = torch.sum(icm_loss * mask)
     icm_loss /= batch_size
     policy.icm_loss = icm_loss
 
@@ -76,10 +76,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
     policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
     overall_err = sum([
-        0.1 * policy.pi_err,  # TODO lambda
+        policy.pi_err,
         policy.config['vf_loss_coeff'] * policy.value_err,
         policy.config['entropy_coeff'] * policy.entropy,
-        icm_loss
+        10.0 * icm_loss
     ])
     return overall_err
 
