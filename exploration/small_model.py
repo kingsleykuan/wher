@@ -11,12 +11,10 @@ class SmallConvNet(nn.Module):
     """
     def __init__(self):
         super(SmallConvNet, self).__init__()
-        self.conv1 = nn.Conv2d(4, 32, 3, 2, 1)
-        self.conv2 = nn.Conv2d(32, 32, 3, 2, 1)
-        self.conv3 = nn.Conv2d(32, 32, 3, 2, 1)
-        self.conv4 = nn.Conv2d(32, 32, 3, 2, 1)
-        self.conv5 = nn.Conv2d(32, 32, 3, 2, 1)
-        self.conv6 = nn.Conv2d(32, 32, 3, 2, 1)
+        self.conv1 = nn.Conv2d(4, 32, 3, 1, 1)
+        self.conv2 = nn.Conv2d(32, 32, 3, 1, 1)
+        self.conv3 = nn.Conv2d(32, 32, 3, 1, 1)
+        self.conv4 = nn.Conv2d(32, 32, 3, 1, 1)
         self.fc1 = nn.Linear(512, 256)
 
     def forward(self, x):
@@ -24,8 +22,6 @@ class SmallConvNet(nn.Module):
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         x = F.relu(self.conv4(x))
-        x = F.relu(self.conv5(x))
-        x = F.relu(self.conv6(x))
         x = x.reshape((-1, 512))
         x = F.relu(self.fc1(x))
         return x
