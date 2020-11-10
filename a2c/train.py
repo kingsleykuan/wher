@@ -18,8 +18,10 @@ def main():
 
     config['env'] = tune.grid_search(
         [
-            'BreakoutNoFrameskip-v4',
-            'MsPacmanNoFrameskip-v4',
+            'GravitarNoFrameskip-v4'
+#            'BreakoutNoFrameskip-v4',
+#            'MsPacmanNoFrameskip-v4',
+#            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -29,8 +31,11 @@ def main():
     # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 1e-3
-    config['lr_mode'] = 'constant'
+    config['lr'] = 1e-4
+    config['lr_mode'] = 'cyclic'
+    config['cyclic_lr_base_lr'] = 1e-4
+    config['cyclic_lr_max_lr'] = 1e-3
+    config['cyclic_lr_step_size'] = 977
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
@@ -48,7 +53,7 @@ def main():
     tune.run(
         TunedA2CTrainer,
         config=config,
-        stop={'timesteps_total': 10000000},
+        stop={'timesteps_total': 100000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

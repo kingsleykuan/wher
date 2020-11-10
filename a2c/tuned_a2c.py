@@ -52,7 +52,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         max_seq_len = torch.max(seq_lens)
         mask_orig = sequence_mask(seq_lens, max_seq_len)
         mask = torch.reshape(mask_orig, [-1])
-        batch_size = seq_lens.shape[0]
+        batch_size = seq_lens.shape[0] * max_seq_len
     else:
         mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
         batch_size = mask.shape[0]

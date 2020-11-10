@@ -17,10 +17,10 @@ class SmallConvNet(nn.Module):
         self.conv4 = nn.Conv2d(32, 32, 3, 2, 1)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
+        x = F.leaky_relu(self.conv1(x))
+        x = F.leaky_relu(self.conv2(x))
+        x = F.leaky_relu(self.conv3(x))
+        x = F.leaky_relu(self.conv4(x))
         x = x.reshape((-1, 3 * 3 * 32))
         return x
 
@@ -35,6 +35,7 @@ class SmallConvLSTMModel(RecurrentNetwork, nn.Module):
         self.convnet = SmallConvNet()
         self.conv_features = None
         self.lstm = nn.LSTM(288, 256, batch_first=True)
+        self.lstm.bias_ih_l0.data[256:256 * 2].fill_(1)
         self.lstm_features = None
         self.action_branch = nn.Linear(256, num_outputs)
         self.value_branch = nn.Linear(256, 1)

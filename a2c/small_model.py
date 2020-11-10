@@ -17,12 +17,12 @@ class SmallConvNet(nn.Module):
         self.fc1 = nn.Linear(3 * 3 * 32, 256)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
+        x = F.leaky_relu(self.conv1(x))
+        x = F.leaky_relu(self.conv2(x))
+        x = F.leaky_relu(self.conv3(x))
+        x = F.leaky_relu(self.conv4(x))
         x = x.reshape((-1, 3 * 3 * 32))
-        x = F.relu(self.fc1(x))
+        x = F.leaky_relu(self.fc1(x))
         return x
 
 class SmallConvModel(TorchModelV2, nn.Module):
