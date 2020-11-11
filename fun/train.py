@@ -31,12 +31,12 @@ def main():
     # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 1e-5
+    config['lr'] = 3e-5
     config['lr_mode'] = 'cyclic'
-    config['cyclic_lr_base_lr'] = 1e-5
-    config['cyclic_lr_max_lr'] = 1e-4
+    config['cyclic_lr_base_lr'] = 3e-5
+    config['cyclic_lr_max_lr'] = 3e-4
     config['cyclic_lr_step_size'] = 1562
-    config['grad_clip'] = 0.5
+    config['grad_clip'] = 0.25
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -53,16 +53,16 @@ def main():
     config['model']['max_seq_len'] = 50
 
     # FuN Config
-    config['fun_horizon'] = 5
+    config['fun_horizon'] = 10
     config['model']['custom_model_config'] = {}
-    config['model']['custom_model_config']['fun_horizon'] = 5
+    config['model']['custom_model_config']['fun_horizon'] = 10
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
     tune.run(
         FuNTrainer,
         config=config,
-        stop={'timesteps_total': 100000000},
+        stop={'timesteps_total': 300000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

@@ -38,8 +38,8 @@ FUN_CONFIG = A2CTrainer.merge_trainer_configs(
         'grad_clip': 0.5,
         'epsilon': 1e-8,
 
-        'fun_horizon': 5,
-        'model': { 'custom_model_config': { 'fun_horizon': 5 } },
+        'fun_horizon': 10,
+        'model': { 'custom_model_config': { 'fun_horizon': 10 } },
 
         '_use_trajectory_view_api': False,
     },
@@ -129,9 +129,9 @@ def postprocesses_trajectories(
     sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
-    sample_batch[SampleBatch.REWARDS] += fun_intrinsic_reward
-    sample_batch[SampleBatch.REWARDS] = np.clip(
-        sample_batch[SampleBatch.REWARDS], -1, 1)
+    sample_batch[SampleBatch.REWARDS] += 0.9 * fun_intrinsic_reward
+    # sample_batch[SampleBatch.REWARDS] = np.clip(
+    #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
     # Compute advantages and value targets for the worker
     sample_batch[SampleBatch.VF_PREDS] = sample_batch['worker_values']

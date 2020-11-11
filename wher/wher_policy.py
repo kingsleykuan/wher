@@ -38,8 +38,8 @@ WHER_CONFIG = A2CTrainer.merge_trainer_configs(
         'grad_clip': 0.5,
         'epsilon': 1e-8,
 
-        'fun_horizon': 5,
-        'model': { 'custom_model_config': { 'fun_horizon': 5 } },
+        'fun_horizon': 10,
+        'model': { 'custom_model_config': { 'fun_horizon': 10 } },
 
         '_use_trajectory_view_api': False,
     },
@@ -111,7 +111,7 @@ def postprocesses_trajectories(
         torch.Tensor(sample_batch[SampleBatch.OBS]),
         torch.Tensor(sample_batch[SampleBatch.NEXT_OBS])
     )
-    exploration_rewards = 0.001 * policy.model.icm_fwd_forward(torch.Tensor(sample_batch[SampleBatch.ACTIONS]))
+    exploration_rewards = 0.005 * policy.model.icm_fwd_forward(torch.Tensor(sample_batch[SampleBatch.ACTIONS]))
     exploration_rewards = exploration_rewards.numpy()
     sample_batch['exploration_rewards'] = exploration_rewards
 
@@ -142,7 +142,7 @@ def postprocesses_trajectories(
     # and compute manager advantages / value targets
     # --------------------------------
     original_rewards = sample_batch[SampleBatch.REWARDS]
-    sample_batch[SampleBatch.REWARDS] += 1.0 * exploration_rewards
+    sample_batch[SampleBatch.REWARDS] += 0.8 * exploration_rewards
     # sample_batch[SampleBatch.REWARDS] = np.clip(
     #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
@@ -160,8 +160,8 @@ def postprocesses_trajectories(
     # and compute worker advantages / value targets
     # --------------------------------
     sample_batch[SampleBatch.REWARDS] = original_rewards
-    sample_batch[SampleBatch.REWARDS] += fun_intrinsic_reward
-    sample_batch[SampleBatch.REWARDS] += 0.0 * exploration_rewards
+    sample_batch[SampleBatch.REWARDS] += 0.9 * fun_intrinsic_reward
+    sample_batch[SampleBatch.REWARDS] += 0.2 * exploration_rewards
     # sample_batch[SampleBatch.REWARDS] = np.clip(
     #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
@@ -206,10 +206,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     )
     icm_fwd_loss = model.icm_fwd_forward(train_batch[SampleBatch.ACTIONS])
     icm_inv_loss = model.icm_inv_forward(train_batch[SampleBatch.ACTIONS])
-    icm_loss = 0.2 * icm_fwd_loss + 0.8 * icm_inv_loss
+    icm_loss = 0.995 * icm_fwd_loss + 0.005 * icm_inv_loss
     icm_loss = torch.sum(icm_loss * mask)
     icm_loss /= batch_size * max_seq_len
-    policy.icm_loss = 10.0 * icm_loss
+    policy.icm_loss = icm_loss
 
     # Hacky way of passing data from sample batch to train batch
     model.random_select = train_batch['random_select'].reshape((batch_size, -1))

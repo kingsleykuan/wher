@@ -57,7 +57,7 @@ def main():
     tune.run(
         TunedA2CTrainer,
         config=config,
-        stop={'timesteps_total': 10000000},
+        stop={'timesteps_total': 300000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

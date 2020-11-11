@@ -109,8 +109,8 @@ class ManagerModule(nn.Module):
             goal = F.avg_pool1d(goal, horizon, 1) * horizon
             goal = goal.permute(0, 2, 1)
 
-        self.critic_input = goal
         goal = goal / goal.norm(dim=-1, keepdim=True)
+        self.critic_input = goal
         return latent_state, goal, h_horizon + c_horizon + goal_horizon
 
     def value_function(self):
