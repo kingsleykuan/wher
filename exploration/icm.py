@@ -85,7 +85,7 @@ class ForwardNet(nn.Module):
                   and the current action, pass torch.cat((phi(s_t), a_t), 1)
         :return:
         """
-        return self.fc2(self.fc1(x))
+        return self.fc2(F.leaky_relu(self.fc1(x)))
 
 
 class InverseNet(nn.Module):
@@ -117,7 +117,7 @@ class InverseNet(nn.Module):
                   torch.cat((phi(s_t), phi(s_{t+1}), 1)
         :return:
         """
-        return self.fc2(self.fc1(x))
+        return self.fc2(F.leaky_relu(self.fc1(x)))
 
 class ICMNet(nn.Module):
     def __init__(self, n_stack, num_actions, in_size=288, feat_size=256):
@@ -139,37 +139,27 @@ class ICMNet(nn.Module):
         self.fwd_net = ForwardNet(self.in_size + self.num_actions)
         self.inv_net = InverseNet(self.num_actions, self.in_size)
 
-    def forward(self, current_states, next_states, action):
-        """
-        feature: current encoded state
-        next_feature: next encoded state
-        :param num_envs: number of the environments
-        :param states: tensor of the states
-        :param action: current action
-        :return:
-        icm_loss, intrinsic_reward
-        """
+        self.current_feature = None
+        self.next_feature = None
 
+    def forward(self, current_states, next_states):
         """Encode the states"""
-        current_feature = self.feat_enc_net(current_states)
-        next_feature = self.feat_enc_net(next_states)
+        self.current_feature = self.feat_enc_net(current_states)
+        self.next_feature = self.feat_enc_net(next_states)
+        return None
 
+    def fwd_forward(self, action):
         action_one_hot = torch.zeros(action.shape[0], self.num_actions, device=self.fwd_net.fc1.weight.device) \
             .scatter_(1, action.long().view(-1, 1), 1)
-        fwd_in = torch.cat((current_feature, action_one_hot), 1)
+        fwd_in = torch.cat((self.current_feature, action_one_hot), 1)
         next_feature_pred = self.fwd_net(fwd_in)
 
-        inv_in = torch.cat((current_feature, next_feature), 1)
+        loss_fwd = 0.5 * F.mse_loss(next_feature_pred, self.next_feature, reduction='none').mean(dim=-1)
+        return loss_fwd
+
+    def inv_forward(self, action):
+        inv_in = torch.cat((self.current_feature, self.next_feature), 1)
         action_pred = self.inv_net(inv_in)
 
-        return self._calc_loss(next_feature, next_feature_pred, action_pred, action), F.mse_loss(next_feature_pred, next_feature, reduction='none') * 0.5
-
-
-    def _calc_loss(self, features, feature_preds, action_preds, actions):
-
-        # forward loss
-        loss_fwd = F.mse_loss(feature_preds, features)
-        # inverse loss
-        loss_inv = F.cross_entropy(action_preds.view(-1, self.num_actions), actions.long())
-
-        return loss_fwd + loss_inv # TODO tune beta here
+        loss_inv = F.cross_entropy(action_pred.view(-1, self.num_actions), action.long(), reduction='none')
+        return loss_inv
