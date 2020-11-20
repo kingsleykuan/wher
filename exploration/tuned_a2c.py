@@ -52,17 +52,19 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         max_seq_len = torch.max(seq_lens)
         mask_orig = sequence_mask(seq_lens, max_seq_len)
         mask = torch.reshape(mask_orig, [-1])
-        batch_size = seq_lens.shape[0]
+        batch_size = seq_lens.shape[0] * max_seq_len
     else:
         mask = torch.ones_like(train_batch[SampleBatch.REWARDS])
         batch_size = mask.shape[0]
 
-    icm_loss, _ = model.icm_forward(
+    _ = model.icm_forward(
         train_batch[SampleBatch.OBS],
-        train_batch[SampleBatch.NEXT_OBS],
-        train_batch[SampleBatch.ACTIONS]
+        train_batch[SampleBatch.NEXT_OBS]
     )
-    icm_loss = torch.sum(icm_loss)
+    icm_fwd_loss = model.icm_fwd_forward(train_batch[SampleBatch.ACTIONS])
+    icm_inv_loss = model.icm_inv_forward(train_batch[SampleBatch.ACTIONS])
+    icm_loss = 0.995 * icm_fwd_loss + 0.005 * icm_inv_loss
+    icm_loss = torch.sum(icm_loss * mask)
     icm_loss /= batch_size
     policy.icm_loss = icm_loss
 
@@ -74,10 +76,10 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     policy.pi_err = -torch.sum(train_batch[Postprocessing.ADVANTAGES] * log_probs.reshape(-1) * mask) / batch_size
     policy.value_err = torch.sum(torch.pow((values.reshape(-1) - train_batch[Postprocessing.VALUE_TARGETS]) * mask, 2.0)) / batch_size
     overall_err = sum([
-        policy.pi_err, #TODO tune lambda here
+        policy.pi_err,
         policy.config['vf_loss_coeff'] * policy.value_err,
         policy.config['entropy_coeff'] * policy.entropy,
-        icm_loss #TODO multiply by 10?
+        icm_loss
     ])
     return overall_err
 
@@ -87,13 +89,13 @@ def add_advantages(policy,
                    sample_batch,
                    other_agent_batches=None,
                    episode=None):
-    _, exploration_rewards = policy.model.icm_forward(
+    _ = policy.model.icm_forward(
         torch.Tensor(sample_batch[SampleBatch.OBS]),
-        torch.Tensor(sample_batch[SampleBatch.NEXT_OBS]),
-        torch.Tensor(sample_batch[SampleBatch.ACTIONS])
+        torch.Tensor(sample_batch[SampleBatch.NEXT_OBS])
     )
+    exploration_rewards = 0.005 * policy.model.icm_fwd_forward(torch.Tensor(sample_batch[SampleBatch.ACTIONS]))
     exploration_rewards = exploration_rewards.numpy()
-    sample_batch[SampleBatch.REWARDS] += exploration_rewards.mean()
+    sample_batch[SampleBatch.REWARDS] += exploration_rewards
     sample_batch['exploration_rewards'] = exploration_rewards
 
     completed = sample_batch[SampleBatch.DONES][-1]
@@ -188,7 +190,7 @@ def get_policy_class(config):
     return TunedA2CPolicy
 
 TunedA2CPolicy = A3CTorchPolicy.with_updates(
-        name='TunedA2CPolicy',
+        name='ICMA2CPolicy',
         get_default_config=lambda: TUNED_A2C_CONFIG,
         loss_fn=actor_critic_loss,
         stats_fn=stats,
@@ -197,7 +199,7 @@ TunedA2CPolicy = A3CTorchPolicy.with_updates(
         optimizer_fn=torch_optimizer)
 
 TunedA2CTrainer = A2CTrainer.with_updates(
-    name='TunedA2C',
+    name='ICMA2C',
     default_config=TUNED_A2C_CONFIG,
     default_policy=TunedA2CPolicy,
     get_policy_class=get_policy_class)

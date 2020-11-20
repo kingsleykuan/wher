@@ -14,7 +14,7 @@ from optim.RMSpropLambdaLR import RMSpropLambdaLR
 from optim.RMSpropCyclicLR import RMSpropCyclicLR
 
 # Merge modified config with A2C and A3C default config
-FUN_CONFIG = A2CTrainer.merge_trainer_configs(
+WHER_CONFIG = A2CTrainer.merge_trainer_configs(
     A2C_DEFAULT_CONFIG,
     {
         'use_gae': False,
@@ -81,6 +81,9 @@ def postprocesses_trajectories(
 
     Computes advantages.
     """
+    # --------------------------------
+    # Compute FuN manager intrinsic rewards
+    # --------------------------------
     horizon = policy.config['fun_horizon']
     seq_len = sample_batch[SampleBatch.REWARDS].shape[0]
 
@@ -101,6 +104,20 @@ def postprocesses_trajectories(
 
     sample_batch['fun_intrinsic_reward'] = fun_intrinsic_reward
 
+    # --------------------------------
+    # Compute ICM exploration intrinsic rewards
+    # --------------------------------
+    _ = policy.model.icm_forward(
+        torch.Tensor(sample_batch[SampleBatch.OBS]),
+        torch.Tensor(sample_batch[SampleBatch.NEXT_OBS])
+    )
+    exploration_rewards = 0.005 * policy.model.icm_fwd_forward(torch.Tensor(sample_batch[SampleBatch.ACTIONS]))
+    exploration_rewards = exploration_rewards.numpy()
+    sample_batch['exploration_rewards'] = exploration_rewards
+
+    # --------------------------------
+    # Estimate last reward if trajectory was truncated
+    # --------------------------------
     completed = sample_batch[SampleBatch.DONES][-1]
     if completed:
         manager_last_r = 0.0
@@ -120,6 +137,15 @@ def postprocesses_trajectories(
         manager_last_r = manager_last_r[0]
         worker_last_r = worker_last_r[0]
 
+    # --------------------------------
+    # Add ICM exploration intrinsic reward to manager
+    # and compute manager advantages / value targets
+    # --------------------------------
+    original_rewards = sample_batch[SampleBatch.REWARDS]
+    sample_batch[SampleBatch.REWARDS] += 0.9 * exploration_rewards
+    # sample_batch[SampleBatch.REWARDS] = np.clip(
+    #     sample_batch[SampleBatch.REWARDS], -1, 1)
+
     # Compute advantages and value targets for the manager
     sample_batch[SampleBatch.VF_PREDS] = sample_batch['manager_values']
     sample_batch = compute_advantages(
@@ -129,7 +155,13 @@ def postprocesses_trajectories(
     sample_batch['manager_advantages'] = sample_batch[Postprocessing.ADVANTAGES]
     sample_batch['manager_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
+    # --------------------------------
+    # Add FuN manager and ICM exploration intrinsic rewards to worker
+    # and compute worker advantages / value targets
+    # --------------------------------
+    sample_batch[SampleBatch.REWARDS] = original_rewards
     sample_batch[SampleBatch.REWARDS] += 0.9 * fun_intrinsic_reward
+    sample_batch[SampleBatch.REWARDS] += 0.1 * exploration_rewards
     # sample_batch[SampleBatch.REWARDS] = np.clip(
     #     sample_batch[SampleBatch.REWARDS], -1, 1)
 
@@ -143,6 +175,7 @@ def postprocesses_trajectories(
     sample_batch['worker_value_targets'] = sample_batch[Postprocessing.VALUE_TARGETS]
 
     # WARNING: These values are only used temporarily. Do not use:
+    # sample_batch[SampleBatch.REWARDS]
     # sample_batch[SampleBatch.VF_PREDS]
     # sample_batch[Postprocessing.ADVANTAGES]
     # sample_batch[Postprocessing.VALUE_TARGETS]
@@ -166,6 +199,17 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
     manager_horizon_mask = mask_orig.clone()
     manager_horizon_mask[:, -horizon:] = False
     manager_horizon_mask = manager_horizon_mask.reshape(-1)
+
+    _ = model.icm_forward(
+        train_batch[SampleBatch.OBS],
+        train_batch[SampleBatch.NEXT_OBS]
+    )
+    icm_fwd_loss = model.icm_fwd_forward(train_batch[SampleBatch.ACTIONS])
+    icm_inv_loss = model.icm_inv_forward(train_batch[SampleBatch.ACTIONS])
+    icm_loss = 0.995 * icm_fwd_loss + 0.005 * icm_inv_loss
+    icm_loss = torch.sum(icm_loss * mask)
+    icm_loss /= batch_size * max_seq_len
+    policy.icm_loss = icm_loss
 
     # Hacky way of passing data from sample batch to train batch
     model.random_select = train_batch['random_select'].reshape((batch_size, -1))
@@ -197,6 +241,7 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
         policy.worker_value_err,
         policy.entropy,
         policy.manager_loss,
+        policy.icm_loss,
     ])
     return overall_err
 
@@ -268,15 +313,17 @@ def stats(policy, train_batch):
         'manager_vf_loss': policy.manager_value_err.item(),
         'worker_vf_loss': policy.worker_value_err.item(),
         'cur_lr': policy._optimizers[0].param_groups[0]['lr'],
-        'fun_intrinsic_reward': train_batch['fun_intrinsic_reward'].mean().item()
+        'fun_intrinsic_reward': train_batch['fun_intrinsic_reward'].mean().item(),
+        'icm_loss': policy.icm_loss.item(),
+        'exploration_rewards': train_batch['exploration_rewards'].mean().item(),
     }
 
 def get_policy_class(config):
-    return FuNPolicy
+    return WherPolicy
 
-FuNPolicy = A3CTorchPolicy.with_updates(
-        name='FuNPolicy',
-        get_default_config=lambda: FUN_CONFIG,
+WherPolicy = A3CTorchPolicy.with_updates(
+        name='WherPolicy',
+        get_default_config=lambda: WHER_CONFIG,
         extra_action_out_fn=model_extra_out,
         postprocess_fn=postprocesses_trajectories,
         loss_fn=actor_critic_loss,
@@ -284,8 +331,8 @@ FuNPolicy = A3CTorchPolicy.with_updates(
         mixins=[ValueNetworkMixin],
         optimizer_fn=torch_optimizer)
 
-FuNTrainer = A2CTrainer.with_updates(
-    name='FuN',
-    default_config=FUN_CONFIG,
-    default_policy=FuNPolicy,
+WherTrainer = A2CTrainer.with_updates(
+    name='Wher',
+    default_config=WHER_CONFIG,
+    default_policy=WherPolicy,
     get_policy_class=get_policy_class)

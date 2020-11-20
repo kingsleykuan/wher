@@ -2,7 +2,7 @@ import ray
 from ray import tune
 from ray.rllib.models import ModelCatalog
 
-from exploration.small_model import SmallConvModel
+from exploration.small_lstm_model import SmallConvLSTMModel
 from exploration.tuned_a2c import TunedA2CTrainer
 
 def main():
@@ -18,16 +18,23 @@ def main():
 
     config['env'] = tune.grid_search(
         [
-            'MontezumaRevengeNoFrameskip-v4',
+            'GravitarNoFrameskip-v4',
+            # 'BreakoutNoFrameskip-v4',
+            # 'MsPacmanNoFrameskip-v4',
+            # 'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
-    # config['monitor'] = True
+
+    # config['evaluation_interval'] = 5
+    # config['evaluation_num_episodes'] = 10
+    # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 1e-3
+    config['lr'] = 7e-4
+    config['lr_mode'] = 'anneal'
     config['end_lr'] = 1e-4
-    config['anneal_timesteps'] = 10000000
+    config['anneal_timesteps'] = 200000000
     config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
@@ -37,15 +44,19 @@ def main():
     config['model']['dim'] = 42
 
     # Use custom model with more layers tuned for smaller input
-    ModelCatalog.register_custom_model('small_conv_model', SmallConvModel)
-    config['model']['custom_model'] = 'small_conv_model'
+    # Add lstm to model
+    ModelCatalog.register_custom_model('small_conv_lstm_model', SmallConvLSTMModel)
+    config['model']['custom_model'] = 'small_conv_lstm_model'
+    config['model']['framestack'] = True
+    config['model']['use_lstm'] = True
+    config['model']['max_seq_len'] = 20
 
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
     tune.run(
         TunedA2CTrainer,
         config=config,
-        stop={'timesteps_total': 100000000},
+        stop={'timesteps_total': 200000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

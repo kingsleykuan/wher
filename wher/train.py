@@ -2,8 +2,8 @@ import ray
 from ray import tune
 from ray.rllib.models import ModelCatalog
 
-from fun.fun_model import FuNModel
-from fun.fun_policy import FuNTrainer
+from wher.wher_model import WherModel
+from wher.wher_policy import WherTrainer
 
 def main():
     config = {}
@@ -18,10 +18,10 @@ def main():
 
     config['env'] = tune.grid_search(
         [
-            'GravitarNoFrameskip-v4'
+            # 'GravitarNoFrameskip-v4'
             # 'BreakoutNoFrameskip-v4',
             # 'MsPacmanNoFrameskip-v4',
-            # 'MontezumaRevengeNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -45,8 +45,8 @@ def main():
 
     # Use custom model with more layers tuned for smaller input
     # Add lstm to model
-    ModelCatalog.register_custom_model('FuNModel', FuNModel)
-    config['model']['custom_model'] = 'FuNModel'
+    ModelCatalog.register_custom_model('WherModel', WherModel)
+    config['model']['custom_model'] = 'WherModel'
     config['model']['framestack'] = True
     config['model']['use_lstm'] = True
     config['model']['max_seq_len'] = 50
@@ -59,7 +59,7 @@ def main():
     # Use 1 main thread and 16 worker threads
     ray.init(num_cpus=17)
     tune.run(
-        FuNTrainer,
+        WherTrainer,
         config=config,
         stop={'timesteps_total': 200000000},
         checkpoint_freq=100,
