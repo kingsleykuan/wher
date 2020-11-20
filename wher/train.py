@@ -13,15 +13,15 @@ def main():
 
     # Effective batch size is 16*16*20 = 5120
     config['num_workers'] = 16
-    config['num_envs_per_worker'] = 4
+    config['num_envs_per_worker'] = 8
     config['rollout_fragment_length'] = 50
 
     config['env'] = tune.grid_search(
         [
-            'GravitarNoFrameskip-v4'
+            # 'GravitarNoFrameskip-v4'
             # 'BreakoutNoFrameskip-v4',
             # 'MsPacmanNoFrameskip-v4',
-            # 'MontezumaRevengeNoFrameskip-v4',
+            'MontezumaRevengeNoFrameskip-v4',
         ])
     config['min_iter_time_s'] = 0
     config['timesteps_per_iteration'] = 100000
@@ -31,12 +31,11 @@ def main():
     # config['evaluation_config'] = { 'monitor': True }
 
     # Override policy config for experiments
-    config['lr'] = 3e-5
-    config['lr_mode'] = 'cyclic'
-    config['cyclic_lr_base_lr'] = 3e-5
-    config['cyclic_lr_max_lr'] = 3e-4
-    config['cyclic_lr_step_size'] = 1562
-    config['grad_clip'] = 0.25
+    config['lr'] = 3e-4
+    config['lr_mode'] = 'anneal'
+    config['end_lr'] = 1e-4
+    config['anneal_timesteps'] = 200000000
+    config['grad_clip'] = 0.5
     # config['epsilon'] = tune.grid_search([1e-3, 1e-5, 1e-8])
 
     config['model'] = {}
@@ -62,7 +61,7 @@ def main():
     tune.run(
         WherTrainer,
         config=config,
-        stop={'timesteps_total': 300000000},
+        stop={'timesteps_total': 200000000},
         checkpoint_freq=100,
         checkpoint_at_end=True)
 

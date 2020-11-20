@@ -185,11 +185,11 @@ def actor_critic_loss(policy, model, dist_class, train_batch):
 
     dist = dist_class(logits, model)
     log_probs = dist.logp(train_batch[SampleBatch.ACTIONS])
-    policy.entropy = 0.0001 * -torch.sum(dist.entropy() * mask)  / (batch_size * max_seq_len)
+    policy.entropy = 3e-4 * -torch.sum(dist.entropy() * mask)  / (batch_size * max_seq_len)
     policy.pi_err = 0.1 * -torch.sum(train_batch['worker_advantages'] * log_probs.reshape(-1) * mask)  / (batch_size * max_seq_len)
 
-    policy.manager_value_err = 0.5 * torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))  / (batch_size * max_seq_len)
-    policy.worker_value_err = 0.005 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))  / (batch_size * max_seq_len)
+    policy.manager_value_err = torch.sum(torch.pow((manager_values.reshape(-1) - train_batch['manager_value_targets']) * mask, 2.0))  / (batch_size * max_seq_len)
+    policy.worker_value_err = 0.01 * torch.sum(torch.pow((worker_values.reshape(-1) - train_batch['worker_value_targets']) * mask, 2.0))  / (batch_size * max_seq_len)
 
     overall_err = sum([
         policy.pi_err,
